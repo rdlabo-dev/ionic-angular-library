@@ -41,3 +41,7 @@ The demo app includes a **Kit** tab with a Firebase Auth harness (`/main/kit/aut
 2. `npm start` — open the Kit tab.
 3. `npm run e2e` — Playwright signs up with a UUID email; `window.__E2E__` skips email confirmation.
 4. `npm run cap` — copy a production build to iOS/Android for device checks (e.g. `kitAuthInput` autofill).
+
+## Maintainers
+
+- [rdlabo](https://rdlabo.dev/)
