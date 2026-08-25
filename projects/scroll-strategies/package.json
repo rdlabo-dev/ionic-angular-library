@@ -1,6 +1,7 @@
 {
   "name": "@rdlabo/ngx-cdk-scroll-strategies",
   "version": "22.0.0-1",
+  "description": "Angular CDK virtual scroll strategy for variable and dynamic item heights.",
   "repository": {
     "type": "git",
     "url": "git@github.com:rdlabo-dev/ionic-angular-library.git"

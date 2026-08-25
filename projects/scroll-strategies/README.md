@@ -1,10 +1,25 @@
 # @rdlabo/ngx-cdk-scroll-strategies
 
+> Angular CDK virtual scroll with variable and dynamic item heights.
+
 ## Overview
 
-This is strategies of dynamic item size for `@angular/cdk/scrolling`. This allows you set specify each item size in the array to be used for Virtual Scroll. Although the repository name includes “Ionic” this strategy only works with Angular.
+`@rdlabo/ngx-cdk-scroll-strategies` is an Angular CDK virtual scroll strategy for lists with variable item heights. It lets you supply the exact pixel size of every item instead of requiring one fixed `[itemSize]` for the whole list.
 
-This is a simple coding concept:
+Use `[itemDynamicSizes]` with known or measured item heights. Unlike the experimental `[autosize]` strategy, this library does not estimate unmeasured items from an average size. It works with `@angular/cdk/scrolling` and does not depend on Ionic.
+
+## When to use this strategy
+
+Use this library when:
+
+- list items or rows have different heights;
+- dynamic item heights can be calculated from data or measured from rendered components;
+- `scrollToIndex` and scroll positions must use exact variable-height geometry; or
+- a chat UI needs reverse virtual scrolling.
+
+If an item height is not known in advance, measure it and pass the result as shown in [Advanced Usage](./docs/advanced.md). This is not a drop-in strategy that discovers every unknown DOM height automatically.
+
+The basic Angular CDK variable-height virtual scroll setup is:
 
 ```html
 <cdk-virtual-scroll-viewport
@@ -16,11 +31,11 @@ This is a simple coding concept:
 </cdk-virtual-scroll-viewport>
 ```
 
-Use `[itemDynamicSizes]` directive instead of `[itemSize]` or `[autosize]` directive. `[itemDynamicSizes]` value's type is `itemDynamicSize[]`.
+Use the `[itemDynamicSizes]` directive instead of `[itemSize]` or `[autosize]`. Its value has the type `itemDynamicSize[]`.
 
 Every data item must have one corresponding `itemDynamicSizes` entry in the same order. Each `itemSize` must be a finite number greater than zero. If Angular updates the data and size signals in separate turns, the strategy keeps the last complete geometry until their lengths match; it never estimates unknown heights.
 
-This library is based largely on this blog: https://dev.to/georgii/virtual-scrolling-of-content-with-variable-height-with-angular-3a52
+This library is based largely on [Virtual scrolling of content with variable height with Angular](https://dev.to/georgii/virtual-scrolling-of-content-with-variable-height-with-angular-3a52).
 
 ## Features
 

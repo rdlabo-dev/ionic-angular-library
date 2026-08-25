@@ -1,6 +1,6 @@
 Call this after [Installation](../README.md#installation).
 
-> This is a demo for reverse scrolling like WeChat.
+> This demo combines variable item heights with reverse virtual scrolling for a chat UI like WeChat.
 
 - Demo: https://rdlabo-ionic-angular-library.netlify.app/main/scroll-strategies/reverse
 - Source: https://github.com/rdlabo-dev/ionic-angular-library/tree/v21.6.2/projects/demo/src/app/scroll-strategies/pages/scroll-reverse

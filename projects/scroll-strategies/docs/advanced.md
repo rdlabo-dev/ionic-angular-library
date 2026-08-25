@@ -1,6 +1,6 @@
 Call this after [Installation](../README.md#installation).
 
-> This is a practical demo. Make scroll items separate components and get a height for each component.
+> This Angular CDK dynamic item height example measures every scroll item as a separate component.
 > It is difficult without basic knowledge of Angular.
 
 - Demo: https://rdlabo-ionic-angular-library.netlify.app/main/scroll-strategies/advanced
