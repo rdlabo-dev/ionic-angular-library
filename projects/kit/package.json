@@ -5,6 +5,7 @@
     "type": "git",
     "url": "https://github.com/rdlabo-dev/ionic-angular-library.git"
   },
+  "homepage": "https://docs.rdlabo.dev/projects/ionic-angular-kit",
   "peerDependencies": {
     "@angular/common": ">=21.0.0 <23.0.0",
     "@angular/core": ">=21.0.0 <23.0.0",
