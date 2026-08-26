@@ -2,7 +2,7 @@ import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { RouterStateSnapshot } from '@angular/router';
 import type { KitAuthAccessLease, KitRemoteAccessRecovery } from '@rdlabo/ionic-angular-kit';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { firstValueFrom, of } from 'rxjs';
 import { createOfflineAuthBridge, type OfflineAuthExchangeContext, type OfflineRemoteIdentity } from './offline-auth-bridge';
 import type { OfflineCoordinatorService } from './offline-coordinator.service';
@@ -68,6 +68,8 @@ function setupBridge(
 }
 
 describe('createOfflineAuthBridge', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
   it('orders exchange, prepareRemoteSession, grant, and resumeRemoteSession', async () => {
     const { bridge, offline, order } = setupBridge();
     const { lease } = createLease();
@@ -199,8 +201,9 @@ describe('createOfflineAuthBridge', () => {
       }),
     );
 
-    await expect(firstValueFrom(bridge.remoteRecovery!.availability())).resolves.toBe(false);
-    TestBed.resetTestingModule();
+    const availability = firstValueFrom(bridge.remoteRecovery!.availability());
+    TestBed.flushEffects();
+    await expect(availability).resolves.toBe(false);
   });
 
   it('uses a custom availability observable when supplied', () => {

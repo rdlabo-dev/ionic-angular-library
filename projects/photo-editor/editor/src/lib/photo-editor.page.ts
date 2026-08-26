@@ -36,6 +36,8 @@ import { dictionaryForEditor, initializeEditorIcons } from './internals';
 })
 /** Ionic modal page for cropping, rotating, filtering, and saving a photo. */
 export class PhotoEditorPage implements OnDestroy, ViewDidEnter, ViewDidLeave {
+  declare static modalReturn: PhotoEditorResult;
+
   protected readonly modalCtrl = inject(ModalController);
   readonly #config = inject(PHOTO_EDITOR_CONFIG);
 
