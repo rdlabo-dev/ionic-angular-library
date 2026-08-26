@@ -25,6 +25,7 @@ Install `@ionic/storage-angular` when using storage. Other peers are feature-sco
 | `@rdlabo/ionic-angular-kit`               | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities |
 | `@rdlabo/ionic-angular-kit/offline`       | Scoped local replica, outbox, pull, replay, and request policies               |
 | `@rdlabo/ionic-angular-kit/theme`         | Persisted light/dark theme and native status bar sync                          |
+| `@rdlabo/ionic-angular-kit/forms`         | Ionic error text and state classes for Angular Signal Forms                    |
 | `@rdlabo/ionic-angular-kit/review`        | Throttled native in-app review requests                                        |
 | `@rdlabo/ionic-angular-kit/printer`       | DOM-to-PNG, Brother label, and PDF helpers                                     |
 | `@rdlabo/ionic-angular-kit/auth-firebase` | Firebase dependency wiring and authentication flows                            |
@@ -42,6 +43,7 @@ Most features expose a provider whose callbacks keep routes, copy, credentials, 
 - [Authentication and HTTP](./docs/auth-http.md)
 - [Offline and Realtime](./docs/offline-realtime.md)
 - [Optional Features](./docs/optional-features.md)
+- [Ionic Signal Forms](./docs/forms.md)
 
 <!-- rdlabo-docs-omit -->
 **Full documentation:** [https://docs.rdlabo.dev/projects/ionic-angular-kit](https://docs.rdlabo.dev/projects/ionic-angular-kit)
