@@ -15,8 +15,10 @@ import { provideKitIonicSignalForms } from './provide-kit-ionic-signal-forms';
     <ion-checkbox [formField]="fields.checkbox"></ion-checkbox>
     <ion-radio-group [formField]="fields.radio"></ion-radio-group>
     <ion-toggle [formField]="fields.toggle"></ion-toggle>
-    <ion-input [formField]="fields.explicit" errorText="Cross-field error"></ion-input>
-    <ion-input [formField]="fields.explicit" [errorText]="boundError"></ion-input>
+    <ion-input [formField]="fields.custom"></ion-input>
+    <ion-input [formField]="fields.unknown"></ion-input>
+    <ion-input data-testid="static-error" [formField]="fields.explicit" errorText="Cross-field error"></ion-input>
+    <ion-input data-testid="bound-error" [formField]="fields.explicit" [errorText]="boundError"></ion-input>
   `,
 })
 class Host {
@@ -29,19 +31,19 @@ class Host {
     checkbox: false,
     radio: '',
     toggle: false,
+    custom: '',
+    unknown: '',
     explicit: '',
   });
   readonly fields = form(this.model, (path) => {
-    validate(path.input, ({ value }) =>
-      value() ? undefined : { kind: 'non-string', message: 123 as unknown as string },
-    );
-    validate(path.input, ({ value }) => (value() ? undefined : { kind: 'empty', message: '  ' }));
-    required(path.input, { message: 'Input required' });
-    required(path.textarea, { message: 'Textarea required' });
-    required(path.select, { message: 'Select required' });
-    required(path.checkbox, { message: 'Checkbox required' });
-    required(path.radio, { message: 'Radio required' });
-    required(path.toggle, { message: 'Toggle required' });
+    required(path.input);
+    required(path.textarea);
+    required(path.select);
+    required(path.checkbox);
+    required(path.radio);
+    required(path.toggle);
+    required(path.custom, { message: 'Localized required' });
+    validate(path.unknown, ({ value }) => (value() ? undefined : { kind: 'domain-error' }));
     required(path.explicit, { message: 'Generated error' });
   });
 }
@@ -54,11 +56,20 @@ describe('KitIonicFormField', () => {
 
     expect(
       [...fixture.nativeElement.querySelectorAll('ion-input, ion-textarea, ion-select, ion-checkbox, ion-radio-group, ion-toggle')]
-        .slice(0, 6)
+        .slice(0, 8)
         .map((element: { errorText?: string }) => element.errorText),
-    ).toEqual(['Input required', 'Textarea required', 'Select required', 'Checkbox required', 'Radio required', 'Toggle required']);
-    expect(fixture.nativeElement.querySelectorAll('ion-input')[1].errorText).toBe('Cross-field error');
-    expect(fixture.nativeElement.querySelectorAll('ion-input')[2].errorText).toBe('Bound cross-field error');
+    ).toEqual([
+      'This field is required.',
+      'This field is required.',
+      'This field is required.',
+      'This field is required.',
+      'This field is required.',
+      'This field is required.',
+      'Localized required',
+      'Enter a valid value.',
+    ]);
+    expect(fixture.nativeElement.querySelector('[data-testid="static-error"]').errorText).toBe('Cross-field error');
+    expect(fixture.nativeElement.querySelector('[data-testid="bound-error"]').errorText).toBe('Bound cross-field error');
 
     const input = fixture.nativeElement.querySelector('ion-input');
     expect(input.classList.contains('ion-invalid')).toBe(true);
