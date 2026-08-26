@@ -30,6 +30,8 @@ import { dictionaryForViewer, initializeViewerIcons, ionComponents } from './int
 })
 /** Ionic modal page for zooming, browsing, and optionally deleting photos. */
 export class PhotoViewerPage implements OnInit, OnDestroy {
+  declare static modalReturn: PhotoViewerResult;
+
   readonly imageUrls = input.required<string[]>();
   readonly index = input<number, NumberInput>(0, {
     transform: coerceNumberProperty,

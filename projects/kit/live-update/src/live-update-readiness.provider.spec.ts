@@ -10,8 +10,6 @@ const { ready } = vi.hoisted(() => ({ ready: vi.fn() }));
 vi.mock('@capawesome/capacitor-live-update', () => ({ LiveUpdate: { ready } }));
 
 describe('provideLiveUpdateReadiness', () => {
-  const flushFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
-
   afterEach(() => {
     ready.mockReset();
     vi.restoreAllMocks();
@@ -22,6 +20,10 @@ describe('provideLiveUpdateReadiness', () => {
     const stable = new ReplaySubject<boolean>(1);
     const routerEvents = new Subject<unknown>();
     vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
     ready.mockResolvedValue({
       previousBundleId: null,
       currentBundleId: null,
@@ -41,8 +43,7 @@ describe('provideLiveUpdateReadiness', () => {
     expect(ready).not.toHaveBeenCalled();
 
     routerEvents.next(new NavigationEnd(1, '/', '/'));
-    await flushFrame();
-    expect(ready).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
   });
 
   it('does not initialize Live Update on the web', () => {

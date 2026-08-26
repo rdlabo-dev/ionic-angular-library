@@ -1,4 +1,10 @@
 type DisableableElement = HTMLElement & { disabled: boolean };
+interface DisableState {
+  count: number;
+  original: boolean;
+}
+
+const disableStates = new WeakMap<DisableableElement, DisableState>();
 
 const isDisableable = (element: EventTarget | null): element is DisableableElement =>
   element instanceof HTMLElement && 'disabled' in element;
@@ -36,6 +42,25 @@ const getDisableTargets = (event: Event): DisableableElement[] => {
   return [...new Set(targets)];
 };
 
+const acquireDisableTarget = (target: DisableableElement): void => {
+  const state = disableStates.get(target);
+  if (state) {
+    state.count += 1;
+    return;
+  }
+  disableStates.set(target, { count: 1, original: target.disabled });
+  target.disabled = true;
+};
+
+const releaseDisableTarget = (target: DisableableElement): void => {
+  const state = disableStates.get(target);
+  if (!state) return;
+  state.count -= 1;
+  if (state.count > 0) return;
+  target.disabled = state.original;
+  disableStates.delete(target);
+};
+
 /**
  * Disable the controls that triggered an event while an async operation runs.
  *
@@ -47,27 +72,26 @@ const getDisableTargets = (event: Event): DisableableElement[] => {
  * controls always recover; handle errors inside `work` when the caller needs to react.
  *
  * @param event - The click or submit event that triggered the operation.
- * @param work - The async operation to run while the controls are disabled.
- * @returns A Promise that resolves once the work has settled and the controls have been restored.
+ * @param work - The operation result. Promise-like work keeps controls disabled until it settles;
+ * void work still shares this entry point and submit prevention without a synthetic async boundary.
+ * @returns A Promise for asynchronous work, otherwise void.
  * @example
  * ```html
  * <form #formRef (submit)="helper.disableHandler($event, save())"></form>
  * <ion-button type="submit" [form]="formRef">Save</ion-button>
  * ```
  */
-export const disableHandler = (event: Event, work: Promise<void | boolean>): Promise<void> => {
+export function disableHandler(event: Event, work: void): void;
+export function disableHandler(event: Event, work: PromiseLike<unknown>): Promise<void>;
+export function disableHandler(event: Event, work: void | PromiseLike<unknown>): void | Promise<void>;
+export function disableHandler(event: Event, work: void | PromiseLike<unknown>): void | Promise<void> {
   if (event.type === 'submit') event.preventDefault();
 
-  const targets = getDisableTargets(event);
-  const disabledStates = targets.map((target) => target.disabled);
-  targets.forEach((target) => (target.disabled = true));
+  if (work === undefined) return;
 
-  return work
-    .then(
-      () => undefined,
-      () => undefined,
-    )
-    .finally(() => {
-      targets.forEach((target, index) => (target.disabled = disabledStates[index]));
-    });
-};
+  const targets = getDisableTargets(event);
+  targets.forEach(acquireDisableTarget);
+
+  const restore = () => targets.forEach(releaseDisableTarget);
+  return new Promise<unknown>((resolve) => resolve(work)).then(restore, restore);
+}
