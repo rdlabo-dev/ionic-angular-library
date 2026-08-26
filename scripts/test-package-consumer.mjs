@@ -96,6 +96,7 @@ try {
   writeFileSync(
     join(temporaryDirectory, 'consumer.ts'),
     `import { type KitAuthInputMode } from '@rdlabo/ionic-angular-kit';
+import { KitIonicFormField, provideKitIonicSignalForms } from '@rdlabo/ionic-angular-kit/forms';
 import { providePhotoEditor, type PhotoEditorProps, type PhotoEditorResult, type PhotoViewerProps, type PhotoViewerResult } from '@rdlabo/ionic-angular-photo-editor';
 import { PhotoEditorPage } from '@rdlabo/ionic-angular-photo-editor/editor';
 import { createTuiImageEditor } from '@rdlabo/ionic-angular-photo-editor/editor/tui';
@@ -111,7 +112,7 @@ const viewerProps: PhotoViewerProps = { imageUrls: [], toolbarColorScheme: 'ligh
 const editorResult: PhotoEditorResult = { action: 'save', value: editorProps.value };
 const viewerResult: PhotoViewerResult = { action: 'delete', index: 0, value: '' };
 const photoProviders = providePhotoEditor({ maxSize: 1000, labels: { camera: 'Camera' } });
-const symbols = [providePhotoEditor, PhotoEditorPage, createTuiImageEditor, PhotoFileService, loadCapacitorPhotoCamera, PhotoViewerPage, ScrollHeaderDirective, CdkDynamicSizeVirtualScroll];
+const symbols = [KitIonicFormField, provideKitIonicSignalForms, providePhotoEditor, PhotoEditorPage, createTuiImageEditor, PhotoFileService, loadCapacitorPhotoCamera, PhotoViewerPage, ScrollHeaderDirective, CdkDynamicSizeVirtualScroll];
 void [mode, viewerProps, editorResult, viewerResult, photoProviders, symbols, calculateItemCountForPixelDistance([{ itemSize: 10 }], 5)];
 `,
   );
