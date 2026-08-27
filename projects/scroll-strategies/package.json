@@ -1,6 +1,6 @@
 {
   "name": "@rdlabo/ngx-cdk-scroll-strategies",
-  "version": "22.0.0-4",
+  "version": "22.0.0-5",
   "description": "Angular CDK virtual scroll strategy for variable and dynamic item heights.",
   "repository": {
     "type": "git",
