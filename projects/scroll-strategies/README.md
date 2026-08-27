@@ -17,7 +17,7 @@ Use this library when:
 - `scrollToIndex` and scroll positions must use exact variable-height geometry; or
 - a chat UI needs reverse virtual scrolling.
 
-If an item height is not known in advance, measure it and pass the result as shown in [Advanced Usage](./docs/advanced.md). This is not a drop-in strategy that discovers every unknown DOM height automatically.
+If an item height is not known in advance, measure it and pass the result as shown in [Advanced Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/advanced). This is not a drop-in strategy that discovers every unknown DOM height automatically.
 
 The basic Angular CDK variable-height virtual scroll setup is:
 
@@ -43,13 +43,13 @@ This library is based largely on [Virtual scrolling of content with variable hei
 
 | Goal | Guide |
 | --- | --- |
-| Specify each item height | [Simple Usage](./docs/simple.md) |
-| Measure item components | [Advanced Usage](./docs/advanced.md) |
-| Reverse chat-style scrolling | [Reverse Scroll](./docs/reverse.md) |
+| Specify each item height | [Simple Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/simple) |
+| Measure item components | [Advanced Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/advanced) |
+| Reverse chat-style scrolling | [Reverse Scroll](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/reverse) |
 
 ## Quick start
 
-After [Installation](#installation), bind `[itemDynamicSizes]` instead of `[itemSize]`. See [Simple Usage](./docs/simple.md).
+After [Installation](#installation), bind `[itemDynamicSizes]` instead of `[itemSize]`. See [Simple Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/simple).
 
 ## Installation
 
@@ -62,10 +62,10 @@ npm install @rdlabo/ngx-cdk-scroll-strategies
 
 Start with [Installation](#installation), then pick a guide.
 
-- [Simple Usage](./docs/simple.md) — per-item heights.
-- [Advanced Usage](./docs/advanced.md) — measured item components.
-- [Reverse Scroll](./docs/reverse.md) — chat-style reverse lists.
-- [FAQ](./docs/faq.md) — why not `autosize`.
+- [Simple Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/simple) — per-item heights.
+- [Advanced Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/advanced) — measured item components.
+- [Reverse Scroll](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/reverse) — chat-style reverse lists.
+- [FAQ](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/faq) — why not `autosize`.
 
 <!-- rdlabo-docs-omit -->
 **Full documentation:** [https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies)

@@ -10,13 +10,13 @@ This is directive for scroll with Header.
 
 | Goal | Guide |
 | --- | --- |
-| Hide and reveal headers on IonContent | [IonContent](./docs/ion-content.md) |
-| Coordinate headers with CDK virtual scroll | [Virtual Scroll](./docs/virtual-scroll.md) |
-| Keep a native header always visible | [Safe Area](./docs/safe-area.md) |
+| Hide and reveal headers on IonContent | [IonContent](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/ion-content) |
+| Coordinate headers with CDK virtual scroll | [Virtual Scroll](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/virtual-scroll) |
+| Keep a native header always visible | [Safe Area](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/safe-area) |
 
 ## Quick start
 
-After [Installation](#installation), attach the directive to `ion-content`. See [IonContent](./docs/ion-content.md).
+After [Installation](#installation), attach the directive to `ion-content`. See [IonContent](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/ion-content).
 
 ## Installation
 
@@ -44,9 +44,9 @@ And import CSS for directive:
 
 Start with [Installation](#installation), then pick a guide.
 
-- [IonContent](./docs/ion-content.md) — scroll-aware Ionic headers.
-- [Virtual Scroll](./docs/virtual-scroll.md) — CDK viewports and the flicker fix.
-- [Safe Area](./docs/safe-area.md) — hidden and native headers.
+- [IonContent](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/ion-content) — scroll-aware Ionic headers.
+- [Virtual Scroll](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/virtual-scroll) — CDK viewports and the flicker fix.
+- [Safe Area](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/safe-area) — hidden and native headers.
 
 <!-- rdlabo-docs-omit -->
 **Full documentation:** [https://docs.rdlabo.dev/projects/ionic-angular-scroll-header](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header)
