@@ -1,15 +1,24 @@
-import { ApplicationInitStatus, ErrorHandler } from '@angular/core';
+import { ApplicationInitStatus, createEnvironmentInjector, EnvironmentInjector, ErrorHandler, Injectable } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { OFFLINE_AGGREGATE_INTENT_PROJECTOR } from './offline-aggregate-intent-projector';
+import type { OfflineCommandHooks } from './offline-command-hooks';
+import { DEFAULT_OFFLINE_COMMAND_HOOKS, OFFLINE_COMMAND_HOOKS } from './offline-command-hooks';
 import { OfflineCoordinatorService } from './offline-coordinator.service';
-import { provideOffline } from './offline-provider';
+import { OFFLINE_KIT_OPTIONS } from './offline-kit-options';
+import { OFFLINE_MUTATION_PERSISTENCE_ADAPTER } from './offline-mutation-persistence.service';
+import { OfflineRouteInitializerService, provideOffline, provideRouteScopedOffline } from './offline-provider';
+import type { OfflineReplicaProjector } from './offline-replica-puller';
+import { OFFLINE_REPLICA_PROJECTOR } from './offline-replica-puller';
 import { defineOfflineReplicaSchema } from './offline-replica-schema';
+import { OFFLINE_REPOSITORY } from './offline-repository';
+import type { OfflineRequestPolicy } from './offline-request-policy';
+import { OFFLINE_MUTATION_REQUEST_POLICIES, OFFLINE_REQUEST_POLICIES } from './offline-request-policy';
 
 describe('provideOffline', () => {
   afterEach(() => TestBed.resetTestingModule());
 
-  const runInitializers = (status: ApplicationInitStatus): void =>
-    (status as unknown as { runInitializers(): void }).runInitializers();
+  const runInitializers = (status: ApplicationInitStatus): void => (status as unknown as { runInitializers(): void }).runInitializers();
 
   function setup(coordinator: Pick<OfflineCoordinatorService, 'initialize' | 'initializeLocal'>) {
     const handleError = vi.fn();
@@ -109,5 +118,139 @@ describe('provideOffline', () => {
     await vi.waitFor(() => expect(handleError).toHaveBeenCalledExactlyOnceWith(failure));
 
     expect(handleError).toHaveBeenCalledOnce();
+  });
+
+  it('creates a complete isolated runtime for a lazy route injector without running an app initializer', () => {
+    TestBed.configureTestingModule({});
+    const parent = TestBed.inject(EnvironmentInjector);
+    const child = createEnvironmentInjector(
+      [
+        provideRouteScopedOffline({
+          mode: 'readCacheOnly',
+          databaseName: 'route-provider-test',
+          createEncryptionKey: async () => 'test-key',
+          replicaSchema: defineOfflineReplicaSchema({ version: 1, entities: [], migrations: [] }),
+          requestPolicies: [],
+        }),
+        { provide: OFFLINE_REPOSITORY, useValue: {} },
+      ],
+      parent,
+      'offline-route-test',
+    );
+
+    expect(child.get(OfflineCoordinatorService)).toBeInstanceOf(OfflineCoordinatorService);
+    expect(child.get(OfflineRouteInitializerService)).toBeInstanceOf(OfflineRouteInitializerService);
+    expect(child.get(ApplicationInitStatus, null)).toBe(parent.get(ApplicationInitStatus));
+    child.destroy();
+  });
+
+  it('does not inherit parent offline configuration into a route-scoped runtime', () => {
+    @Injectable()
+    class ParentCommandHooks implements OfflineCommandHooks {
+      entityType = vi.fn(() => 'parent-entity');
+    }
+    @Injectable()
+    class ParentReplicaProjector implements OfflineReplicaProjector {
+      project = vi.fn(async () => ({ putRows: [], removeRows: [] }));
+    }
+    @Injectable()
+    class ParentRequestPolicy implements OfflineRequestPolicy {
+      resolve = vi.fn(() => null);
+    }
+
+    TestBed.configureTestingModule({
+      providers: [
+        provideOffline({
+          mode: 'readCacheOnly',
+          databaseName: 'parent-provider-test',
+          createEncryptionKey: async () => 'test-key',
+          replicaSchema: defineOfflineReplicaSchema({ version: 1, entities: [], migrations: [] }),
+          requestPolicies: [ParentRequestPolicy],
+          commandHooks: ParentCommandHooks,
+          replicaProjector: ParentReplicaProjector,
+        }),
+        { provide: OfflineCoordinatorService, useValue: { initialize: vi.fn(async () => undefined), initializeLocal: vi.fn(async () => undefined) } },
+      ],
+    });
+    const parent = TestBed.inject(EnvironmentInjector);
+    expect(parent.get(OFFLINE_COMMAND_HOOKS)).toBeInstanceOf(ParentCommandHooks);
+
+    const child = createEnvironmentInjector(
+      [
+        provideRouteScopedOffline({
+          mode: 'readCacheOnly',
+          databaseName: 'route-provider-test',
+          createEncryptionKey: async () => 'test-key',
+          replicaSchema: defineOfflineReplicaSchema({ version: 1, entities: [], migrations: [] }),
+          requestPolicies: [],
+        }),
+        { provide: OFFLINE_REPOSITORY, useValue: {} },
+      ],
+      parent,
+      'offline-route-isolation-test',
+    );
+
+    expect(child.get(OFFLINE_COMMAND_HOOKS)).toBe(DEFAULT_OFFLINE_COMMAND_HOOKS);
+    expect(child.get(OFFLINE_REPLICA_PROJECTOR, null)).toBeNull();
+    expect(child.get(OFFLINE_AGGREGATE_INTENT_PROJECTOR, null)).toBeNull();
+    expect(child.get(OFFLINE_MUTATION_PERSISTENCE_ADAPTER)).toBeNull();
+    expect(child.get(OFFLINE_REQUEST_POLICIES)).toEqual([]);
+    expect(child.get(OFFLINE_MUTATION_REQUEST_POLICIES)).toEqual([]);
+    expect(child.get(OFFLINE_KIT_OPTIONS).databaseName).toBe('route-provider-test');
+    child.destroy();
+  });
+
+  it('keeps route-scoped policy and hook overrides when a parent runtime exists', () => {
+    @Injectable()
+    class RouteCommandHooks implements OfflineCommandHooks {
+      entityType = vi.fn(() => 'route-entity');
+    }
+    @Injectable()
+    class RouteRequestPolicy implements OfflineRequestPolicy {
+      resolve = vi.fn(() => null);
+    }
+
+    TestBed.configureTestingModule({});
+    const parent = TestBed.inject(EnvironmentInjector);
+    const child = createEnvironmentInjector(
+      [
+        provideRouteScopedOffline({
+          mode: 'readCacheOnly',
+          databaseName: 'route-override-test',
+          createEncryptionKey: async () => 'test-key',
+          replicaSchema: defineOfflineReplicaSchema({ version: 1, entities: [], migrations: [] }),
+          requestPolicies: [RouteRequestPolicy],
+          commandHooks: RouteCommandHooks,
+        }),
+        { provide: OFFLINE_REPOSITORY, useValue: {} },
+      ],
+      parent,
+      'offline-route-override-test',
+    );
+
+    expect(child.get(OFFLINE_COMMAND_HOOKS)).toBeInstanceOf(RouteCommandHooks);
+    expect(child.get(OFFLINE_REQUEST_POLICIES)).toHaveLength(1);
+    child.destroy();
+  });
+
+  it('initializes one route runtime once when multiple guards or resolvers wait for it', async () => {
+    const coordinator = {
+      initialize: vi.fn(async () => undefined),
+      initializeLocal: vi.fn(async () => undefined),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        OfflineRouteInitializerService,
+        { provide: OfflineCoordinatorService, useValue: coordinator },
+        { provide: ErrorHandler, useValue: { handleError: vi.fn() } },
+        { provide: OFFLINE_KIT_OPTIONS, useValue: { mode: 'readCacheOnly' } },
+      ],
+    });
+
+    const initializer = TestBed.inject(OfflineRouteInitializerService);
+    await Promise.all([initializer.initialize(), initializer.initialize()]);
+
+    expect(coordinator.initializeLocal).toHaveBeenCalledOnce();
+    expect(coordinator.initialize).toHaveBeenCalledOnce();
   });
 });

@@ -29,6 +29,46 @@ provideKitAuth(() => ({
 
 On explicit sign-out, clear `KitAuthAccessService` first, then await offline session cleanup so in-flight leases are invalidated before persisted user data is removed.
 
+### Lazy authenticated routes
+
+Use `provideRouteScopedOffline()` when the offline runtime and product schema must not enter the
+unauthenticated application graph. Unlike the root `provideOffline()` API, the route-scoped provider
+creates isolated Kit service instances and does not start them automatically. This lets the product
+finish native reset recovery before opening SQLite or IndexedDB.
+
+```ts
+import { inject } from '@angular/core';
+import type { CanActivateFn, Routes } from '@angular/router';
+import { OfflineRouteInitializerService, provideRouteScopedOffline } from '@rdlabo/ionic-angular-kit/offline';
+
+const offlineReadyGuard: CanActivateFn = async () => {
+  await recoverProductOwnedLocalReset();
+  await inject(OfflineRouteInitializerService).initialize();
+  return true;
+};
+
+export const routes: Routes = [
+  {
+    path: '',
+    providers: [provideRouteScopedOffline(options)],
+    canActivate: [offlineReadyGuard],
+    children: [
+      {
+        path: '',
+        canActivate: [authorizedGuard],
+        loadComponent: () => import('./authenticated.page').then((module) => module.AuthenticatedPage),
+      },
+    ],
+  },
+];
+```
+
+Use a parent/child route boundary when authorization depends on the initialized offline bridge. Do
+not rely on ordering between guards declared in the same `canActivate` array.
+
+Keep `provideOffline()` for existing root installations. Moving a provider is an application design
+choice; adopting the new API is not a required migration.
+
 ## Realtime connection
 
 Subclass `KitRealtimeConnection` to supply connection intent and `{ url, protocols }` targets. The kit owns foreground and network suspension, target-scoped reconnect, exponential backoff, ping/pong detection, self-echo annotation, and `reconnected$` resync signaling.
