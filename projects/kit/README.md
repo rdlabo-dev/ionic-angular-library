@@ -35,15 +35,14 @@ Secondary entry points isolate optional native and SDK dependencies from the cor
 
 ## Configure only what you use
 
-Most features expose a provider whose callbacks keep routes, copy, credentials, and application side effects outside the kit. Start with [Storage and Overlays](./docs/storage-overlays.md), then add authentication, offline, or native features as your app needs them.
+Most features expose a provider whose callbacks keep routes, copy, credentials, and application side effects outside the kit. Start with [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays), then add authentication, offline, or native features as your app needs them.
 
 ## Documentation
 
-- [Storage and Overlays](./docs/storage-overlays.md)
-- [Authentication and HTTP](./docs/auth-http.md)
-- [Offline and Realtime](./docs/offline-realtime.md)
-- [Optional Features](./docs/optional-features.md)
-- [Ionic Signal Forms](./docs/forms.md)
+- [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays)
+- [Authentication and HTTP](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/auth-http)
+- [Offline and Realtime](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/offline-realtime)
+- [Optional Features](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/optional-features)
 
 <!-- rdlabo-docs-omit -->
 **Full documentation:** [https://docs.rdlabo.dev/projects/ionic-angular-kit](https://docs.rdlabo.dev/projects/ionic-angular-kit)

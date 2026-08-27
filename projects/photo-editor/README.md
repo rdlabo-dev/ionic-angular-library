@@ -10,10 +10,10 @@ Photo editor and viewer modal pages for Ionic Angular applications, with Capacit
 
 | Goal                              | Guide                                                                                                                               |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Load a photo from camera or album | [PhotoFileService](./docs/photo-file.md)                                                                                            |
-| Crop and edit in a modal          | [Photo Editor](./docs/editor.md)                                                                                                    |
-| Browse images in a modal          | [Photo Viewer](./docs/viewer.md)                                                                                                    |
-| Override editor colors            | [Theme](./docs/theme.md)                                                                                                            |
+| Load a photo from camera or album | [PhotoFileService](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/photo-file)                                     |
+| Crop and edit in a modal          | [Photo Editor](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/editor)                                             |
+| Browse images in a modal          | [Photo Viewer](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/viewer)                                             |
+| Override editor colors            | [Theme](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/theme)                                                     |
 | Upgrade from an earlier release   | [Migration guide](https://github.com/rdlabo-dev/ionic-angular-library/blob/main/docs/migration.md#rdlaboionic-angular-photo-editor) |
 
 ## Quick start
@@ -41,7 +41,7 @@ export const appConfig = {
 const files = await this.photoFileService.loadPhoto({ limit: 1 });
 ```
 
-Present the editor or viewer from their secondary entry points. Details: [PhotoFileService](./docs/photo-file.md), [Photo Editor](./docs/editor.md), [Photo Viewer](./docs/viewer.md).
+Present the editor or viewer from their secondary entry points. Details: [PhotoFileService](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/photo-file), [Photo Editor](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/editor), [Photo Viewer](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/viewer).
 
 ## Package entry points
 
@@ -85,10 +85,10 @@ The root, `/editor`, and `/file` entry points do not import optional implementat
 
 Start with [Installation](#installation), then pick a guide.
 
-- [PhotoFileService](./docs/photo-file.md) — camera and album.
-- [Photo Editor](./docs/editor.md) — crop and edit in a modal.
-- [Photo Viewer](./docs/viewer.md) — browse images in a modal.
-- [Theme](./docs/theme.md) — CSS variables and toolbar color scheme.
+- [PhotoFileService](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/photo-file) — camera and album.
+- [Photo Editor](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/editor) — crop and edit in a modal.
+- [Photo Viewer](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/viewer) — browse images in a modal.
+- [Theme](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/theme) — CSS variables and toolbar color scheme.
 - [Migration guide](https://github.com/rdlabo-dev/ionic-angular-library/blob/main/docs/migration.md#rdlaboionic-angular-photo-editor) — breaking changes and required consumer updates.
 
 <!-- rdlabo-docs-omit -->
