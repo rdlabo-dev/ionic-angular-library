@@ -1,4 +1,4 @@
-import type { AlertController } from '@ionic/angular';
+import type { AlertController } from '@ionic/angular/alert-controller';
 
 /**
  * Content for {@link kitPresentAuthFailedAlert}.
