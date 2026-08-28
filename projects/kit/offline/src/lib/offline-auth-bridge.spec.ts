@@ -60,7 +60,9 @@ function setupBridge(
     isUnavailableError: overrides.isUnavailableError ?? (() => true),
     availability: overrides.availability ?? (() => of(true)),
     isIdentityCurrent: overrides.isIdentityCurrent,
+    beforeRemoteResume: overrides.beforeRemoteResume,
     onRemoteResumed: overrides.onRemoteResumed,
+    resumeMode: overrides.resumeMode,
     retryDelayMs: overrides.retryDelayMs,
   });
 
@@ -84,10 +86,35 @@ describe('createOfflineAuthBridge', () => {
       ['2'],
       'subject-a',
       expect.objectContaining({ isCurrent: expect.any(Function) }),
+      { deferRuntime: false },
     );
 
     await recovery.resume(lease);
     expect(order).toEqual(['exchange-authorize', 'prepare', 'resume']);
+  });
+
+  it('waits for the product readiness boundary before resuming transport', async () => {
+    const order: string[] = [];
+    const { bridge, offline } = setupBridge({
+      beforeRemoteResume: async () => void order.push('ready'),
+      onRemoteResumed: async () => void order.push('resumed'),
+      resumeMode: 'background',
+    });
+    const { lease } = createLease();
+
+    const recovery = assertRecovery(await bridge.onAuthorized!(stateStub, lease));
+    await recovery.activate(lease);
+    await recovery.resume(lease);
+
+    expect(recovery.resumeMode).toBe('background');
+    expect(offline.prepareRemoteSession).toHaveBeenCalledWith(
+      1,
+      ['2'],
+      'subject-a',
+      expect.objectContaining({ isCurrent: expect.any(Function) }),
+      { deferRuntime: true },
+    );
+    expect(order).toEqual(['ready', 'resumed']);
   });
 
   it('rejects activation when the lease becomes stale after exchange', async () => {

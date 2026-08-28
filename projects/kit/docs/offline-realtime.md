@@ -69,6 +69,37 @@ not rely on ordering between guards declared in the same `canActivate` array.
 Keep `provideOffline()` for existing root installations. Moving a provider is an application design
 choice; adopting the new API is not a required migration.
 
+### Defer remote work until authenticated content is visible
+
+Route-scoped applications can open only the local substrate on the activation path, then resume
+pull and Outbox transport after their first useful content has rendered. Existing applications keep
+the blocking behavior unless they opt in to both settings below.
+
+```ts
+const offlineReadyGuard: CanActivateFn = async () => {
+  await inject(OfflineRouteInitializerService).initialize({ remote: 'deferred' });
+  return true;
+};
+
+createOfflineAuthBridge({
+  exchange,
+  currentAuthSubject,
+  isUnavailableError,
+  resumeMode: 'background',
+  beforeRemoteResume: () => authenticatedContentReady.wait(),
+});
+```
+
+`activate` still installs and lease-checks the remotely verified identity before the guard grants
+access. Only `resumeRemoteSession()` is deferred. Keep `resumeMode: 'blocking'` when the route needs
+the first pull or Outbox replay before it can render safely. A readiness promise should include a
+bounded fallback so a deep link that does not render the primary content cannot suspend transport
+indefinitely. Always call `startRemoteRuntime()` after that same boundary, including when the
+credential exchange falls back to local access. This installs network discovery so an offline start
+can recover immediately when connectivity returns. Start the fallback timer only after local access
+has been granted; starting it in the local initializer can launch the remote runtime while a slow
+credential exchange is still pending.
+
 ## Realtime connection
 
 Subclass `KitRealtimeConnection` to supply connection intent and `{ url, protocols }` targets. The kit owns foreground and network suspension, target-scoped reconnect, exponential backoff, ping/pong detection, self-echo annotation, and `reconnected$` resync signaling.

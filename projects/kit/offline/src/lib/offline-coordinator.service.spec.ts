@@ -184,23 +184,21 @@ describe('OfflineCoordinatorService', () => {
     expect(sync.initialize).toHaveBeenCalledOnce();
   });
 
-  it('does not start a session transition before runtime initialization completes', async () => {
+  it('prepares a verified session without waiting for remote runtime initialization', async () => {
     let releaseNetwork: (() => void) | undefined;
     const networkGate = new Promise<void>((resolve) => {
       releaseNetwork = resolve;
     });
     const { coordinator, order, sync } = setup(null, { networkInitialize: () => networkGate });
 
-    const activation = coordinator.prepareRemoteSession(1, ['2'], 'subject');
+    const activation = coordinator.prepareRemoteSession(1, ['2'], 'subject', undefined, { deferRuntime: true });
     await coordinator.initializeLocal();
 
-    expect(sync.initialize).toHaveBeenCalledOnce();
-    expect(order).toEqual([]);
+    await expect(activation).resolves.toBe(true);
+    expect(sync.initialize).not.toHaveBeenCalled();
+    expect(order).toEqual(['reset', 'suspend-remote', 'activate-remote']);
 
     releaseNetwork?.();
-    await expect(activation).resolves.toBe(true);
-    expect(sync.initialize).toHaveBeenCalledOnce();
-    expect(order).toEqual(['reset', 'suspend-remote', 'activate-remote']);
   });
 
   it('does not revive a remote activation invalidated by logout while network initialization waits', async () => {

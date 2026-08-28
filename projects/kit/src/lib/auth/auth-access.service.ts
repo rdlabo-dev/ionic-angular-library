@@ -35,6 +35,17 @@ export interface KitRemoteAccessRecovery {
    * with callers that manually resumed a recovery result before leases were introduced.
    */
   resume(lease?: KitAuthAccessLease): Promise<void>;
+  /**
+   * Whether route activation must wait for {@link resume} to settle.
+   *
+   * @remarks
+   * Use `background` only when {@link activate} has already installed every identity and local
+   * capability boundary required to render the route safely. Authentication denial still revokes
+   * access; transport unavailability is handled by the configured recovery policy.
+   *
+   * @defaultValue 'blocking'
+   */
+  resumeMode?: 'blocking' | 'background';
 }
 
 /** Recovery-specific authentication configuration consumed by {@link KitAuthRecoveryService}. */

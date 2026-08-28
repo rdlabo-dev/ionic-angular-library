@@ -19,6 +19,12 @@ export interface OfflineResumeRemoteSessionOptions {
   readonly foregroundScopeIds?: readonly string[];
 }
 
+/** Startup policy for preparing a remotely verified session boundary. */
+export interface OfflinePrepareRemoteSessionOptions {
+  /** Skip network and sync startup until {@link resumeRemoteSession}. Defaults to `false`. */
+  readonly deferRuntime?: boolean;
+}
+
 /** Coordinates local persistence, session boundaries, network state, and outbox synchronization. */
 @Injectable({ providedIn: 'root' })
 export class OfflineCoordinatorService {
@@ -115,10 +121,11 @@ export class OfflineCoordinatorService {
     scopeIds: readonly string[],
     authSubject: string | null,
     authLease?: OfflineSessionTransitionLease,
+    options: OfflinePrepareRemoteSessionOptions = {},
   ): Promise<boolean> {
     const revision = ++this.#transitionRevision;
     const lease = this.#lease(revision, authLease);
-    await this.initialize();
+    await (options.deferRuntime ? this.initializeLocal() : this.initialize());
     if (this.#storageUnavailable()) return true;
     if (!lease.isCurrent()) return false;
     return this.#enqueueTransition(async () => {
