@@ -1,5 +1,21 @@
 Optional features use secondary entry points so their native plugins and SDKs do not enter applications that do not use them.
 
+## Web application updates
+
+`provideKitAppUpdate()` from `/app-update` checks for a complete Angular service-worker version before bootstrap. This blocking
+strategy remains the default for applications where preserving all in-progress input is more important than a slow update check.
+
+Applications that prefetch every executable application chunk can opt into a non-blocking startup check:
+
+```ts
+provideKitAppUpdate({ strategy: 'background' });
+```
+
+The background strategy reloads only before Angular completes its first render. A later update is left for the next natural page
+load so user input is not discarded. It never calls `activateUpdate()`, which could mix a running shell with lazy chunks from
+another version. An unrecoverable startup generation is retried once with `ngsw-bypass`; the current history state and an
+offline-safe loop guard are retained.
+
 ## Theme and review
 
 `provideKitTheme()` and `KitThemeController` persist a user preference, follow `prefers-color-scheme` until overridden, toggle app-provided palette classes, and synchronize the Android status bar.

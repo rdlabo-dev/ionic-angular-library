@@ -29,6 +29,7 @@ Install `@ionic/storage-angular` when using storage. Other peers are feature-sco
 | `@rdlabo/ionic-angular-kit/review`        | Throttled native in-app review requests                                        |
 | `@rdlabo/ionic-angular-kit/printer`       | DOM-to-PNG, Brother label, and PDF helpers                                     |
 | `@rdlabo/ionic-angular-kit/auth-firebase` | Firebase dependency wiring and authentication flows                            |
+| `@rdlabo/ionic-angular-kit/app-update`    | Atomic Angular service-worker update transitions                               |
 | `@rdlabo/ionic-angular-kit/live-update`   | Capawesome Live Update readiness provider                                      |
 
 Secondary entry points isolate optional native and SDK dependencies from the core bundle.
