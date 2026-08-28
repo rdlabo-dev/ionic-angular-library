@@ -293,17 +293,19 @@ describe('kitRequireAuthorizedGuard', () => {
   it("'user' → ignores a stale explicit denial from background resume", async () => {
     let rejectResume!: (reason: unknown) => void;
     const resumeGate = new Promise<void>((_resolve, reject) => (rejectResume = reject));
+    const resume = vi.fn(async () => resumeGate);
     const onAuthorized = vi.fn(async () => ({
       activate: async () => true,
-      resume: async () => resumeGate,
+      resume,
       resumeMode: 'background' as const,
     }));
     const { navigate, handleError } = setup('user', { onAuthorized });
 
     await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
     TestBed.inject(KitAuthAccessService).clear();
-    rejectResume({ status: 401 });
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const denial = { status: 401 };
+    rejectResume(denial);
+    await expect(resume.mock.results[0]?.value).rejects.toBe(denial);
 
     expect(navigate).not.toHaveBeenCalled();
     expect(handleError).not.toHaveBeenCalled();
