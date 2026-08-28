@@ -54,6 +54,10 @@ export interface CreateOfflineAuthBridgeOptions<TIdentity extends OfflineRemoteI
   readonly isIdentityCurrent?: (identity: TIdentity) => boolean;
   /** Optional product hook after the kit publishes remote access and transport resumes. */
   readonly onRemoteResumed?: (context: OfflineAuthResumeContext<TIdentity>) => Promise<void>;
+  /** Optional readiness boundary to await after remote access is published and before transport resumes. */
+  readonly beforeRemoteResume?: (context: OfflineAuthResumeContext<TIdentity>) => Promise<void>;
+  /** Whether guarded route activation waits for transport resume. Defaults to `blocking`. */
+  readonly resumeMode?: 'blocking' | 'background';
   /** Delay before {@link KitAuthRecoveryService} retries recovery while local access remains active. */
   readonly retryDelayMs?: number;
 }
@@ -90,7 +94,16 @@ export function createOfflineAuthBridge<TIdentity extends OfflineRemoteIdentity>
   options: CreateOfflineAuthBridgeOptions<TIdentity>,
 ): OfflineAuthBridgeConfig {
   const offline = options.offline ?? inject(OfflineCoordinatorService);
-  const { exchange, currentAuthSubject, isUnavailableError, isIdentityCurrent, onRemoteResumed, retryDelayMs } = options;
+  const {
+    exchange,
+    currentAuthSubject,
+    isUnavailableError,
+    isIdentityCurrent,
+    beforeRemoteResume,
+    onRemoteResumed,
+    resumeMode,
+    retryDelayMs,
+  } = options;
   const defaultAvailability$ = options.availability
     ? undefined
     : toObservable(offline.networkState).pipe(
@@ -115,18 +128,30 @@ export function createOfflineAuthBridge<TIdentity extends OfflineRemoteIdentity>
     if (!identityStillCurrent(lease, identity)) return false;
 
     return {
+      resumeMode,
       activate: async (activateLease) => {
         if (!identityStillCurrent(activateLease, identity)) return false;
         const identityLease: KitAuthAccessLease = {
           isCurrent: () => identityStillCurrent(activateLease, identity),
         };
-        const prepared = await offline.prepareRemoteSession(identity.userId, identity.scopeIds, identity.authSubject, identityLease);
+        const prepared = await offline.prepareRemoteSession(identity.userId, identity.scopeIds, identity.authSubject, identityLease, {
+          deferRuntime: resumeMode === 'background',
+        });
         return prepared && identityLease.isCurrent();
       },
       resume: async (resumeLease) => {
         const resumeStillCurrent = (): boolean =>
           (resumeLease?.isCurrent() ?? true) && currentAuthSubject() === identity.authSubject && (isIdentityCurrent?.(identity) ?? true);
         if (!resumeStillCurrent()) return;
+        if (beforeRemoteResume) {
+          await beforeRemoteResume({
+            phase,
+            state,
+            lease: resumeLease ?? lease,
+            identity,
+          });
+          if (!resumeStillCurrent()) return;
+        }
         await offline.resumeRemoteSession(
           identity.foregroundScopeIds !== undefined ? { foregroundScopeIds: identity.foregroundScopeIds } : undefined,
         );

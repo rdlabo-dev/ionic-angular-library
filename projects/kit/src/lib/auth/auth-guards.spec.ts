@@ -1,4 +1,4 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { ErrorHandler, provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { ActivatedRouteSnapshot, RouterStateSnapshot, UrlTree } from '@angular/router';
 import { Router } from '@angular/router';
@@ -67,6 +67,7 @@ function setup(
 ) {
   const navigate = vi.fn().mockResolvedValue(true);
   const setDirection = vi.fn();
+  const handleError = vi.fn();
 
   TestBed.configureTestingModule({
     providers: [
@@ -81,10 +82,11 @@ function setup(
       })),
       { provide: Router, useValue: { navigate } },
       { provide: NavController, useValue: { setDirection } },
+      { provide: ErrorHandler, useValue: { handleError } },
     ],
   });
 
-  return { navigate, setDirection, onAuthorized, onUnauthenticated, onUnavailable, isUnavailableError };
+  return { navigate, setDirection, handleError, onAuthorized, onUnauthenticated, onUnavailable, isUnavailableError };
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +236,81 @@ describe('kitRequireAuthorizedGuard', () => {
     expect(TestBed.inject(KitAuthAccessService).mode).toBe('remote');
   });
 
+  it("'user' → does not block route activation on background transport resume", async () => {
+    let releaseResume!: () => void;
+    const resumeGate = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    const resume = vi.fn(() => resumeGate);
+    const onAuthorized = vi.fn(async () => ({
+      activate: async () => true,
+      resume,
+      resumeMode: 'background' as const,
+    }));
+    setup('user', { onAuthorized });
+
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
+    expect(resume).toHaveBeenCalledOnce();
+    expect(TestBed.inject(KitAuthAccessService).mode).toBe('remote');
+
+    releaseResume();
+    await resumeGate;
+  });
+
+  it("'user' → reports an unclassified background transport failure without rejecting activation", async () => {
+    const failure = new Error('resume failed');
+    const onAuthorized = vi.fn(async () => ({
+      activate: async () => true,
+      resume: async () => {
+        throw failure;
+      },
+      resumeMode: 'background' as const,
+    }));
+    const { handleError } = setup('user', { onAuthorized });
+
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
+    await vi.waitFor(() => expect(handleError).toHaveBeenCalledWith(failure));
+    expect(TestBed.inject(KitAuthAccessService).mode).toBe('remote');
+  });
+
+  it.each([401, 403])("'user' → redirects after an explicit denial from background resume", async (status) => {
+    const denial = { status };
+    const onAuthorized = vi.fn(async () => ({
+      activate: async () => true,
+      resume: async () => Promise.reject(denial),
+      resumeMode: 'background' as const,
+    }));
+    const { navigate, setDirection, handleError } = setup('user', { onAuthorized });
+
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith([REDIRECTS.whenUnauthorized]));
+
+    expect(setDirection).toHaveBeenCalledWith('root');
+    expect(handleError).toHaveBeenCalledWith(denial);
+    expect(TestBed.inject(KitAuthAccessService).mode).toBe('none');
+  });
+
+  it("'user' → ignores a stale explicit denial from background resume", async () => {
+    let rejectResume!: (reason: unknown) => void;
+    const resumeGate = new Promise<void>((_resolve, reject) => (rejectResume = reject));
+    const resume = vi.fn(async () => resumeGate);
+    const onAuthorized = vi.fn(async () => ({
+      activate: async () => true,
+      resume,
+      resumeMode: 'background' as const,
+    }));
+    const { navigate, handleError } = setup('user', { onAuthorized });
+
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
+    TestBed.inject(KitAuthAccessService).clear();
+    const denial = { status: 401 };
+    rejectResume(denial);
+    await expect(resume.mock.results[0]?.value).rejects.toBe(denial);
+
+    expect(navigate).not.toHaveBeenCalled();
+    expect(handleError).not.toHaveBeenCalled();
+  });
+
   it("'user' → invalidates the post-grant resume lease before stale user-visible effects", async () => {
     let markResumeStarted!: () => void;
     let releaseResume!: () => void;
@@ -295,9 +372,7 @@ describe('kitRequireAuthorizedGuard', () => {
     }));
     setup('user', { onAuthorized, isUnavailableError: (error) => error === networkError });
 
-    await expect(
-      runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub))),
-    ).resolves.toBe(true);
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
     expect(TestBed.inject(KitAuthAccessService).mode).toBe('remote');
   });
 
@@ -311,9 +386,7 @@ describe('kitRequireAuthorizedGuard', () => {
     }));
     setup('user', { onAuthorized, isUnavailableError: (error) => error === networkError });
 
-    await expect(
-      runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub))),
-    ).resolves.toBe(true);
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(true);
     expect(TestBed.inject(KitAuthAccessService).mode).toBe('remote');
   });
 
@@ -367,11 +440,7 @@ describe('kitRequireAuthorizedGuard', () => {
     const { onUnauthenticated } = setup('unavailable', { onUnavailable });
     const result = await runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)));
     expect(result).toBe(true);
-    expect(onUnavailable).toHaveBeenCalledWith(
-      stateStub,
-      undefined,
-      expect.objectContaining({ isCurrent: expect.any(Function) }),
-    );
+    expect(onUnavailable).toHaveBeenCalledWith(stateStub, undefined, expect.objectContaining({ isCurrent: expect.any(Function) }));
     expect(onUnauthenticated).not.toHaveBeenCalled();
     expect(TestBed.inject(KitAuthAccessService).mode).toBe('local');
   });
@@ -380,9 +449,7 @@ describe('kitRequireAuthorizedGuard', () => {
     const onUnavailable = vi.fn().mockResolvedValue(false);
     const { navigate } = setup('unavailable', { onUnavailable });
 
-    await expect(
-      runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub))),
-    ).resolves.toBe(false);
+    await expect(runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)))).resolves.toBe(false);
     expect(navigate).toHaveBeenCalledWith([REDIRECTS.whenUnauthorized]);
     expect(TestBed.inject(KitAuthAccessService).mode).toBe('none');
   });
@@ -413,11 +480,7 @@ describe('kitRequireAuthorizedGuard', () => {
     });
     const result = await runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)));
     expect(result).toBe(true);
-    expect(onUnavailable).toHaveBeenCalledWith(
-      stateStub,
-      networkError,
-      expect.objectContaining({ isCurrent: expect.any(Function) }),
-    );
+    expect(onUnavailable).toHaveBeenCalledWith(stateStub, networkError, expect.objectContaining({ isCurrent: expect.any(Function) }));
   });
 
   it('unclassified onAuthorized error propagates without local fallback', async () => {
@@ -598,11 +661,7 @@ describe('kitRequireAuthorizedGuard — auth state source errors', () => {
 
     const result = await runGuard(TestBed.runInInjectionContext(() => kitRequireAuthorizedGuard(routeStub, stateStub)));
     expect(result).toBe(true);
-    expect(onUnavailable).toHaveBeenCalledWith(
-      stateStub,
-      networkError,
-      expect.objectContaining({ isCurrent: expect.any(Function) }),
-    );
+    expect(onUnavailable).toHaveBeenCalledWith(stateStub, networkError, expect.objectContaining({ isCurrent: expect.any(Function) }));
   });
 
   it('does not classify an error from onUnavailable a second time', async () => {

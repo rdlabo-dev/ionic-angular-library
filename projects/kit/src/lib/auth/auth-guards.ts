@@ -1,5 +1,5 @@
 import type { EnvironmentProviders } from '@angular/core';
-import { inject, InjectionToken, makeEnvironmentProviders, provideAppInitializer } from '@angular/core';
+import { ErrorHandler, inject, InjectionToken, makeEnvironmentProviders, provideAppInitializer } from '@angular/core';
 import type { CanActivateFn, RouterStateSnapshot, UrlTree } from '@angular/router';
 import { Router } from '@angular/router';
 import { NavController } from '@ionic/angular/common';
@@ -270,10 +270,19 @@ export const kitRequireAuthorizedGuard: CanActivateFn = (_route, state) => {
   const router = inject(Router);
   const navCtrl = inject(NavController);
   const access = inject(KitAuthAccessService);
+  const errorHandler = inject(ErrorHandler);
   const lease = access.beginTransition({ suspendRemote: true });
 
-  const redirectUnauthorized = (): false => {
-    if (!lease.isCurrent()) return false;
+  const reportError = (error: unknown): void => {
+    try {
+      errorHandler.handleError(error);
+    } catch {
+      // Error reporting must not create an unhandled background rejection.
+    }
+  };
+
+  const redirectUnauthorized = (currentLease: KitAuthAccessLease = lease): false => {
+    if (!currentLease.isCurrent()) return false;
     access.clear();
     navCtrl.setDirection('root');
     router.navigate([redirects.whenUnauthorized]);
@@ -304,15 +313,30 @@ export const kitRequireAuthorizedGuard: CanActivateFn = (_route, state) => {
       const resumeLease = access.grantRemote();
       if (!resumeLease.isCurrent()) return false;
       const resume = async (): Promise<void> => result.resume(resumeLease);
-      await resume().catch((error: unknown) => {
+      const handleResumeError = (error: unknown): void => {
         if (!resumeLease.isCurrent()) return;
         if (isExplicitAuthDenial(error)) {
+          if (result.resumeMode === 'background') {
+            redirectUnauthorized(resumeLease);
+            reportError(error);
+            return;
+          }
           access.clear();
           throw error;
         }
         if (!isUnavailableError?.(error)) throw error;
-        return;
-      });
+      };
+      if (result.resumeMode === 'background') {
+        void resume().catch((error: unknown) => {
+          try {
+            handleResumeError(error);
+          } catch (unhandledError: unknown) {
+            reportError(unhandledError);
+          }
+        });
+        return resumeLease.isCurrent();
+      }
+      await resume().catch(handleResumeError);
       return resumeLease.isCurrent();
     }
     if (result === true) access.grantRemote();

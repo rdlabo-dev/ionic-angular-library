@@ -117,14 +117,20 @@ export class OfflineRouteInitializerService {
   readonly #options = inject(OFFLINE_KIT_OPTIONS);
   #initialization: Promise<void> | null = null;
 
-  /** Initialize local storage once, then continue transport initialization in the background. */
-  initialize(): Promise<void> {
-    return (this.#initialization ??= this.#initialize());
+  /** Initialize local storage once, optionally continuing transport initialization in the background. */
+  initialize(options: { remote?: 'background' | 'deferred' } = {}): Promise<void> {
+    return (this.#initialization ??= this.#initialize(options.remote ?? 'background'));
   }
 
-  #initialize(): Promise<void> {
+  /** Starts deferred network discovery and synchronization without delaying the caller on transport. */
+  startRemoteRuntime(): Promise<void> {
     assertSupportedOfflineMode(Capacitor.getPlatform(), this.#options.mode ?? 'synchronized');
     return initializeOfflineRuntime(this.#coordinator, this.#errorHandler);
+  }
+
+  #initialize(remote: 'background' | 'deferred'): Promise<void> {
+    assertSupportedOfflineMode(Capacitor.getPlatform(), this.#options.mode ?? 'synchronized');
+    return remote === 'deferred' ? this.#coordinator.initializeLocal() : initializeOfflineRuntime(this.#coordinator, this.#errorHandler);
   }
 }
 

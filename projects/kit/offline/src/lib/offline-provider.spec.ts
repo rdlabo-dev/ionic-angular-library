@@ -169,7 +169,10 @@ describe('provideOffline', () => {
           commandHooks: ParentCommandHooks,
           replicaProjector: ParentReplicaProjector,
         }),
-        { provide: OfflineCoordinatorService, useValue: { initialize: vi.fn(async () => undefined), initializeLocal: vi.fn(async () => undefined) } },
+        {
+          provide: OfflineCoordinatorService,
+          useValue: { initialize: vi.fn(async () => undefined), initializeLocal: vi.fn(async () => undefined) },
+        },
       ],
     });
     const parent = TestBed.inject(EnvironmentInjector);
@@ -251,6 +254,49 @@ describe('provideOffline', () => {
     await Promise.all([initializer.initialize(), initializer.initialize()]);
 
     expect(coordinator.initializeLocal).toHaveBeenCalledOnce();
+    expect(coordinator.initialize).toHaveBeenCalledOnce();
+  });
+
+  it('can defer route transport initialization while still opening local storage once', async () => {
+    const coordinator = {
+      initialize: vi.fn(async () => undefined),
+      initializeLocal: vi.fn(async () => undefined),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        OfflineRouteInitializerService,
+        { provide: OfflineCoordinatorService, useValue: coordinator },
+        { provide: ErrorHandler, useValue: { handleError: vi.fn() } },
+        { provide: OFFLINE_KIT_OPTIONS, useValue: { mode: 'readCacheOnly' } },
+      ],
+    });
+
+    const initializer = TestBed.inject(OfflineRouteInitializerService);
+    await initializer.initialize({ remote: 'deferred' });
+
+    expect(coordinator.initializeLocal).toHaveBeenCalledOnce();
+    expect(coordinator.initialize).not.toHaveBeenCalled();
+  });
+
+  it('can start network discovery after deferred local initialization', async () => {
+    const coordinator = {
+      initialize: vi.fn(async () => undefined),
+      initializeLocal: vi.fn(async () => undefined),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        OfflineRouteInitializerService,
+        { provide: OfflineCoordinatorService, useValue: coordinator },
+        { provide: ErrorHandler, useValue: { handleError: vi.fn() } },
+        { provide: OFFLINE_KIT_OPTIONS, useValue: { mode: 'readCacheOnly' } },
+      ],
+    });
+
+    const initializer = TestBed.inject(OfflineRouteInitializerService);
+    await initializer.initialize({ remote: 'deferred' });
+    await initializer.startRemoteRuntime();
+
+    expect(coordinator.initializeLocal).toHaveBeenCalledTimes(2);
     expect(coordinator.initialize).toHaveBeenCalledOnce();
   });
 });
