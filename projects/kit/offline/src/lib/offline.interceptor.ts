@@ -10,11 +10,14 @@ import {
   defer,
   dematerialize,
   EMPTY,
+  filter,
   from,
   map,
   materialize,
+  NEVER,
   of,
   Observable,
+  race,
   ReplaySubject,
   take,
   tap,
@@ -47,6 +50,9 @@ export const offlineInterceptor: HttpInterceptorFn = (request, next) => {
     if (!plan) return transport();
     if (plan.readStrategy === 'local-first') {
       return readLocalFirst(request, plan, transport, fallback, inject(ErrorHandler), inject(OfflineReplicaMutationCoordinator));
+    }
+    if (plan.readStrategy === 'fastest-first') {
+      return readFastestFirst(request, plan, transport, fallback, inject(ErrorHandler), inject(OfflineReplicaMutationCoordinator));
     }
     return readNetworkFirst(request, plan, transport, fallback);
   }
@@ -106,6 +112,41 @@ function readLocalFirst(
               : drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback),
           ),
         ),
+      { connector: () => new ReplaySubject<MaterializedTransport>() },
+    ),
+  );
+}
+
+/** Races a serialized local replica read against remote transport without allowing stale local data to follow remote. */
+function readFastestFirst(
+  request: HttpRequest<unknown>,
+  plan: OfflineReadRequestPlan,
+  transport: () => Observable<HttpEvent<unknown>>,
+  fallback: OfflineRequestFallbackService,
+  errorHandler: ErrorHandler,
+  replicaMutations: OfflineReplicaMutationCoordinator,
+): Observable<HttpEvent<unknown>> {
+  return defer(transport).pipe(
+    materialize(),
+    connect(
+      (bufferedTransport$) => {
+        const localDecision$ = resolveLocalAttempt(plan, errorHandler, replicaMutations).pipe(
+          concatMap((localResponse) =>
+            localResponse
+              ? concat(of(localResponse), drainRemoteAfterLocal(bufferedTransport$, plan))
+              : drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback),
+          ),
+        );
+        // Angular transport emits Sent/progress events before the response.
+        // They are not usable read results and therefore must not win the race.
+        const remoteWinner$ = drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback).pipe(
+          filter((event) => event instanceof AngularHttpResponse),
+          // A remote error is not a usable response. Keep it buffered until the
+          // local attempt decides whether it can satisfy the read.
+          catchError(() => NEVER),
+        );
+        return race(localDecision$, remoteWinner$);
+      },
       { connector: () => new ReplaySubject<MaterializedTransport>() },
     ),
   );
