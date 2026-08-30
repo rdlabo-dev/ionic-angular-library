@@ -1,8 +1,16 @@
-import { HttpContext, HttpErrorResponse, HttpHeaders, HttpRequest, HttpResponse } from '@angular/common/http';
+import {
+  HttpContext,
+  HttpErrorResponse,
+  type HttpEvent,
+  HttpEventType,
+  HttpHeaders,
+  HttpRequest,
+  HttpResponse,
+} from '@angular/common/http';
 import { ErrorHandler } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { finalize, firstValueFrom, of, Subject, throwError, type Observable } from 'rxjs';
+import { finalize, firstValueFrom, Observable, of, Subject, throwError } from 'rxjs';
 import { OfflineNetworkService } from './offline-network.service';
 import { OFFLINE_MUTATION_PERSISTENCE_ENABLED } from './offline-mutation-persistence.service';
 import { OfflineReplicaMutationCoordinator } from './offline-replica-mutation-coordinator';
@@ -556,6 +564,156 @@ describe('offlineInterceptor', () => {
       await vi.waitFor(() => expect(emissions).toHaveLength(1));
       subscription.unsubscribe();
       expect(transportUnsubscribed).toBe(true);
+    });
+  });
+
+  describe('fastest-first read strategy', () => {
+    const fastestFirstPlan = (overrides: Partial<OfflineRequestPlan> = {}): OfflineRequestPlan => ({
+      kind: 'read',
+      readStrategy: 'fastest-first',
+      readLocal: vi.fn(async () => null),
+      ...overrides,
+    });
+
+    it('remote先着時はreplica lane待ちのlocal readを抑止する', async () => {
+      const coordinator = TestBed.inject(OfflineReplicaMutationCoordinator);
+      let releaseMutation!: () => void;
+      const mutationGate = new Promise<void>((resolve) => (releaseMutation = resolve));
+      let mutationStarted!: () => void;
+      const mutationReady = new Promise<void>((resolve) => (mutationStarted = resolve));
+      const mutation = coordinator.run(async () => {
+        mutationStarted();
+        await mutationGate;
+      });
+      await mutationReady;
+
+      const remote = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+      const readLocal = vi.fn(async () => new HttpResponse({ body: { value: 'stale local' }, status: 200 }));
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal }));
+
+      await expect(firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => of(remote)))).resolves.toBe(remote);
+      releaseMutation();
+      await mutation;
+      await coordinator.drain();
+
+      expect(readLocal).not.toHaveBeenCalled();
+      expect(markApiSuccess).toHaveBeenCalledOnce();
+    });
+
+    it('local先着時はlocalをemitしてからremoteで再検証する', async () => {
+      const local = new HttpResponse({ body: { value: 'local' }, status: 200 });
+      const remote = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+      const transport$ = new Subject<HttpResponse<unknown>>();
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(async () => local) }));
+
+      const emissions: HttpResponse<unknown>[] = [];
+      let complete!: () => void;
+      const completed = new Promise<void>((resolve) => (complete = resolve));
+      run(new HttpRequest('GET', '/bootstrap'), () => transport$).subscribe({
+        next: (event) => {
+          if (event instanceof HttpResponse) emissions.push(event);
+        },
+        complete,
+      });
+      await vi.waitFor(() => expect(emissions).toHaveLength(1));
+      transport$.next(remote);
+      transport$.complete();
+      await completed;
+
+      expect(emissions).toHaveLength(2);
+      expect(emissions[0] instanceof HttpResponse && emissions[0].body).toEqual({ value: 'local' });
+      expect(emissions[0] instanceof HttpResponse && emissions[0].headers.get(OFFLINE_RESPONSE_HEADER)).toBe('local');
+      expect(emissions[1]).toBe(remote);
+    });
+
+    it('remoteのSent eventは勝敗に使わず、即時localの後にremote responseをemitする', async () => {
+      const local = new HttpResponse({ body: { value: 'local' }, status: 200 });
+      const remote = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+      const transport$ = new Subject<HttpEvent<unknown>>();
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(async () => local) }));
+
+      const emissions: HttpResponse<unknown>[] = [];
+      let complete!: () => void;
+      const completed = new Promise<void>((resolve) => (complete = resolve));
+      run(new HttpRequest('GET', '/bootstrap'), () => transport$).subscribe({
+        next: (event) => {
+          if (event instanceof HttpResponse) emissions.push(event);
+        },
+        complete,
+      });
+      transport$.next({ type: HttpEventType.Sent });
+      await vi.waitFor(() => expect(emissions).toHaveLength(1));
+      transport$.next(remote);
+      transport$.complete();
+      await completed;
+
+      expect(emissions.map((event) => event.body)).toEqual([{ value: 'local' }, { value: 'remote' }]);
+    });
+
+    it('remote先着後に遅いlocalをemitしない', async () => {
+      let resolveLocal!: (value: HttpResponse<unknown>) => void;
+      const localReady = new Promise<HttpResponse<unknown>>((resolve) => (resolveLocal = resolve));
+      const remote = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(() => localReady) }));
+
+      const emissions = await collect(run(new HttpRequest('GET', '/bootstrap'), () => of(remote)));
+      resolveLocal(new HttpResponse({ body: { value: 'stale local' }, status: 200 }));
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      expect(emissions).toEqual([remote]);
+    });
+
+    it('local miss時はremoteを待つ', async () => {
+      let emitRemote!: () => void;
+      const remote$ = new Observable<HttpResponse<unknown>>((subscriber) => {
+        emitRemote = () => {
+          subscriber.next(new HttpResponse({ body: { value: 'remote' }, status: 200 }));
+          subscriber.complete();
+        };
+      });
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(async () => null) }));
+
+      const pending = firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => remote$));
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      emitRemote();
+      await expect(pending).resolves.toMatchObject({ body: { value: 'remote' } });
+    });
+
+    it('remote error先着でもlocal hitを先にemitする', async () => {
+      const remoteError = new HttpErrorResponse({ status: 500, error: 'server error' });
+      let resolveLocal!: (value: HttpResponse<unknown>) => void;
+      const localReady = new Promise<HttpResponse<unknown>>((resolve) => (resolveLocal = resolve));
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(() => localReady) }));
+
+      const emissions: HttpResponse<unknown>[] = [];
+      let observedError: unknown;
+      const settled = new Promise<void>((resolve) => {
+        run(new HttpRequest('GET', '/bootstrap'), () => throwError(() => remoteError)).subscribe({
+          next: (event) => {
+            if (event instanceof HttpResponse) emissions.push(event);
+          },
+          error: (error: unknown) => {
+            observedError = error;
+            resolve();
+          },
+        });
+      });
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      resolveLocal(new HttpResponse({ body: { value: 'local' }, status: 200 }));
+      await settled;
+
+      expect(emissions).toHaveLength(1);
+      expect(emissions[0]?.body).toEqual({ value: 'local' });
+      expect(observedError).toBe(remoteError);
+    });
+
+    it('remote error先着かつlocal missならremote errorを返す', async () => {
+      const remoteError = new HttpErrorResponse({ status: 500, error: 'server error' });
+      resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(async () => null) }));
+
+      await expect(
+        firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => throwError(() => remoteError))),
+      ).rejects.toBe(remoteError);
     });
   });
 

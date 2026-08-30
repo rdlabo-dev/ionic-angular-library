@@ -43,7 +43,7 @@ export function shouldCommitOfflineCollection<T>(emission: OfflineReadEmission<r
 }
 
 /** Controls GET emission order between local replica and remote transport. */
-export type OfflineReadStrategy = 'network-first' | 'local-first';
+export type OfflineReadStrategy = 'network-first' | 'local-first' | 'fastest-first';
 
 /** Product read policy backed by a local replica fallback for transport failures. */
 export interface OfflineReadRequestPlan {
@@ -58,6 +58,9 @@ export interface OfflineReadRequestPlan {
    * projected local first on hit, then drains the buffered remote response.
    * Callers must keep the HTTP observable subscribed through revalidation;
    * `firstValueFrom` and `take(1)` cancel in-flight transport.
+   * `fastest-first` emits whichever usable local or remote response settles
+   * first. A winning local response is followed by remote revalidation; a
+   * winning remote response cancels and suppresses the slower local read.
    */
   readStrategy?: OfflineReadStrategy;
   /**
