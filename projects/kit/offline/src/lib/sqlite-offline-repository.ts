@@ -44,7 +44,11 @@ import {
   type OfflineReplicaTransaction,
   type OfflineScope,
 } from './offline-repository';
-import { OFFLINE_REPOSITORY_ATOMIC_MUTATION } from './offline-repository-concurrency';
+import {
+  normalizeOfflineReplicaTransientWriteError,
+  OFFLINE_REPOSITORY_ATOMIC_MUTATION,
+  OfflineReplicaTransientWriteError,
+} from './offline-repository-concurrency';
 import { OfflineStorageUnavailableError } from './offline-storage';
 import {
   COMMUNITY_SQLITE_ENCRYPTED,
@@ -818,7 +822,9 @@ export class SqliteOfflineRepository implements OfflineRepository {
   }
 
   async #nativeTransaction<T>(databaseId: string, run: () => Promise<T>): Promise<T> {
-    await this.#sqlite!.beginTransaction({ databaseId });
+    await this.#sqlite!.beginTransaction({ databaseId }).catch((error: unknown) => {
+      throw normalizeOfflineReplicaTransientWriteError(error);
+    });
     const execute = async (): Promise<T> => run();
     return execute()
       .then(async (result) => {
@@ -826,16 +832,17 @@ export class SqliteOfflineRepository implements OfflineRepository {
         return result;
       })
       .catch(async (error: unknown) => {
+        const normalizedError = normalizeOfflineReplicaTransientWriteError(error);
         const rollback = await this.#sqlite!.rollbackTransaction({ databaseId }).then(
           () => ({ status: 'fulfilled' as const }),
           (rollbackError: unknown) => ({ status: 'rejected' as const, rollbackError }),
         );
         if (rollback.status === 'rejected') {
-          throw new AggregateError([error, rollback.rollbackError], 'Offline SQLite transaction and rollback both failed.', {
-            cause: error,
+          throw new AggregateError([normalizedError, rollback.rollbackError], 'Offline SQLite transaction and rollback both failed.', {
+            cause: normalizedError,
           });
         }
-        throw error;
+        throw normalizedError;
       });
   }
 
@@ -1115,7 +1122,10 @@ export class SqliteOfflineRepository implements OfflineRepository {
       await this.#execute(databaseId, 'UPDATE offline_metadata SET schema_version = schema_version WHERE id = 1');
       const actual = await this.#dataVersion(databaseId);
       if (actual !== expected) {
-        throw new Error('Offline replica changed through another SQLite connection; retry the operation from fresh state.');
+        throw new OfflineReplicaTransientWriteError(
+          'concurrent_revision',
+          'Offline replica changed through another SQLite connection; retry the operation from fresh state.',
+        );
       }
       return run(databaseId);
     });

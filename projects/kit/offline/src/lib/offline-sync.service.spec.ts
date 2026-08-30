@@ -14,7 +14,7 @@ import { OfflineNetworkService } from './offline-network.service';
 import { OfflineMutationAdmissionService, OfflineMutationPersistenceDisabledError } from './offline-mutation-admission.service';
 import { OfflineReplicaPullService, OfflineReplicaSchemaMismatchError } from './offline-replica-pull.service';
 import { OfflineReplicaMutationCoordinator } from './offline-replica-mutation-coordinator';
-import { OFFLINE_REPOSITORY_ATOMIC_MUTATION } from './offline-repository-concurrency';
+import { OFFLINE_REPOSITORY_ATOMIC_MUTATION, OfflineReplicaTransientWriteError } from './offline-repository-concurrency';
 import {
   defineOfflineReplicaSchema,
   defineReplicaEntity,
@@ -4097,12 +4097,45 @@ describe('OfflineSyncService', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('transactReplica failureはrejectしbackground flushはErrorHandlerへ渡す', async () => {
+  it('transport成功後の一時的なlocal ACK failureは通信を再送せずfresh snapshotで確定する', async () => {
+    const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository;
+    const originalTransact = vi.mocked(repository.transactReplica).getMockImplementation()!;
+    let remainingFailures = 1;
+    vi.mocked(repository.transactReplica).mockImplementation(async (transaction) => {
+      if (transaction.putCommands?.some((command) => command.state === 'awaiting_pull') && remainingFailures > 0) {
+        remainingFailures -= 1;
+        throw new OfflineReplicaTransientWriteError('sqlite_busy', 'SQLITE_BUSY');
+      }
+      return originalTransact(transaction);
+    });
+    await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: '1' },
+        operation: 'documents.upsert',
+        payload: {},
+      },
+      { flush: false },
+    );
+    connected.set(true);
+    await service.flush();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(service.pendingCommands()[0]).toMatchObject({
+      state: 'awaiting_pull',
+      lastErrorCode: null,
+      serverCommitUnknown: false,
+    });
+    expect(handleError).not.toHaveBeenCalled();
+  });
+
+  it('繰り返すlocal ACK failureはlocal_completionとして記録しbackground flushはErrorHandlerへ渡す', async () => {
     const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository;
     const originalTransact = vi.mocked(repository.transactReplica).getMockImplementation()!;
     vi.mocked(repository.transactReplica).mockImplementation(async (transaction) => {
       if (transaction.putCommands?.some((command) => command.state === 'awaiting_pull')) {
-        throw new Error('transaction failed');
+        throw new OfflineReplicaTransientWriteError('sqlite_locked', 'SQLITE_LOCKED');
       }
       return originalTransact(transaction);
     });
@@ -4118,11 +4151,18 @@ describe('OfflineSyncService', () => {
     );
     connected.set(true);
     await service.refreshSession();
-    await vi.waitFor(() => expect(handleError).toHaveBeenCalledWith(expect.objectContaining({ message: 'transaction failed' })));
+    await vi.waitFor(() =>
+      expect(handleError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'OfflineLocalCompletionError',
+          message: 'Offline command reached the server but local acknowledgement could not be persisted.',
+        }),
+      ),
+    );
 
     await service.refreshSession();
     await expect(service.flush()).resolves.toBeUndefined();
-    expect(service.pendingCommands()[0]).toMatchObject({ state: 'retry_wait', lastErrorCode: 'network' });
+    expect(service.pendingCommands()[0]).toMatchObject({ state: 'retry_wait', lastErrorCode: 'local_completion' });
   });
 
   it('executor error without integer statusもsendingに残さずretry_waitへ戻す', async () => {

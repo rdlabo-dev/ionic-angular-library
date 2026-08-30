@@ -28,6 +28,7 @@ import type {
   OfflineScope,
 } from './offline-repository';
 import { canonicalOfflineReplicaRowKey, OFFLINE_REPOSITORY } from './offline-repository';
+import { OfflineReplicaTransientWriteError } from './offline-repository-concurrency';
 import {
   canonicalOfflinePrincipalId,
   canonicalOfflineCommandIdentity,
@@ -1251,7 +1252,7 @@ export class OfflineSyncService {
       }
       const result = execution.result;
       if (!this.#isCurrent(generation)) return;
-      const completeCommand = async (): Promise<void> => this.#completeCommand(commands, sending, result, generation);
+      const completeCommand = async (): Promise<void> => this.#completeCommandWithRetry(commands, sending, result, generation);
       const completion = await completeCommand().then(
         () => ({ status: 'fulfilled' as const }),
         (error: unknown) => ({ status: 'rejected' as const, error }),
@@ -1290,6 +1291,24 @@ export class OfflineSyncService {
     generation: number,
   ): Promise<void> {
     return this.#serializeReplicaMutation((repository) => this.#completeCommandLocked(commands, command, result, generation, repository));
+  }
+
+  async #completeCommandWithRetry(
+    commands: OfflineCommand[],
+    command: OfflineCommand,
+    result: OfflineCommandResult,
+    generation: number,
+  ): Promise<void> {
+    return this.#completeCommand(commands, command, result, generation).catch(async (firstError: unknown) => {
+      if (!isRetryableLocalCompletionError(firstError)) throw firstError;
+      const retry = await this.#completeCommand(commands, command, result, generation).then(
+        () => ({ status: 'fulfilled' as const }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+      if (retry.status === 'fulfilled') return;
+      if (!isRetryableLocalCompletionError(retry.error)) throw retry.error;
+      throw new OfflineLocalCompletionError(retry.error, firstError);
+    });
   }
 
   async #completeCommandLocked(
@@ -1526,7 +1545,7 @@ export class OfflineSyncService {
       ...command,
       state: 'retry_wait',
       retryAt,
-      lastErrorCode: status > 0 ? String(status) : 'network',
+      lastErrorCode: error instanceof OfflineLocalCompletionError ? 'local_completion' : status > 0 ? String(status) : 'network',
       serverCommitUnknown,
     };
   }
@@ -1892,4 +1911,17 @@ export class OfflineSyncService {
 
 function compareOfflineCommands(left: OfflineCommand, right: OfflineCommand): number {
   return left.createdAt - right.createdAt || (left.commandId < right.commandId ? -1 : left.commandId > right.commandId ? 1 : 0);
+}
+
+class OfflineLocalCompletionError extends AggregateError {
+  constructor(retryError: unknown, firstError: unknown) {
+    super([firstError, retryError], 'Offline command reached the server but local acknowledgement could not be persisted.', {
+      cause: retryError,
+    });
+    this.name = 'OfflineLocalCompletionError';
+  }
+}
+
+function isRetryableLocalCompletionError(error: unknown): boolean {
+  return error instanceof OfflineReplicaTransientWriteError;
 }
