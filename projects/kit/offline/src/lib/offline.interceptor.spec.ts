@@ -83,6 +83,45 @@ describe('offlineInterceptor', () => {
     expect(markApiSuccess).toHaveBeenCalledOnce();
   });
 
+  it('remote responseの投影をin-flight replica mutationの完了後まで待つ', async () => {
+    const coordinator = TestBed.inject(OfflineReplicaMutationCoordinator);
+    let releaseMutation!: () => void;
+    const mutationGate = new Promise<void>((resolve) => (releaseMutation = resolve));
+    let mutationStarted!: () => void;
+    const mutationReady = new Promise<void>((resolve) => (mutationStarted = resolve));
+    const mutation = coordinator.run(async () => {
+      mutationStarted();
+      await mutationGate;
+    });
+    await mutationReady;
+
+    const transportResponse = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+    const projectResponse = vi.fn(async () => transportResponse);
+    resolve.mockReturnValue({ kind: 'read', readLocal: vi.fn(), projectResponse, serializeResponseProjection: true });
+
+    const projected = firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => of(transportResponse)));
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(projectResponse).not.toHaveBeenCalled();
+
+    releaseMutation();
+    await mutation;
+    await expect(projected).resolves.toBe(transportResponse);
+    expect(projectResponse).toHaveBeenCalledOnce();
+  });
+
+  it('mutationを開始する投影はreplica laneの外で実行する', async () => {
+    const coordinator = TestBed.inject(OfflineReplicaMutationCoordinator);
+    const transportResponse = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+    const projectResponse = vi.fn(async () => {
+      await coordinator.run(async () => undefined);
+      return transportResponse;
+    });
+    resolve.mockReturnValue({ kind: 'read', readLocal: vi.fn(), projectResponse });
+
+    await expect(firstValueFrom(run(new HttpRequest('GET', '/status'), () => of(transportResponse)))).resolves.toBe(transportResponse);
+    expect(projectResponse).toHaveBeenCalledOnce();
+  });
+
   it('remote projection失敗はlocal fallbackで隠さない', async () => {
     const projectionError = new HttpErrorResponse({ status: 0, error: new Error('local persistence failed') });
     const readLocal = vi.fn();
@@ -711,9 +750,9 @@ describe('offlineInterceptor', () => {
       const remoteError = new HttpErrorResponse({ status: 500, error: 'server error' });
       resolve.mockReturnValue(fastestFirstPlan({ readLocal: vi.fn(async () => null) }));
 
-      await expect(
-        firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => throwError(() => remoteError))),
-      ).rejects.toBe(remoteError);
+      await expect(firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => throwError(() => remoteError)))).rejects.toBe(
+        remoteError,
+      );
     });
   });
 

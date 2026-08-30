@@ -5,3 +5,39 @@
  * This symbol is intentionally not re-exported from the package entry point.
  */
 export const OFFLINE_REPOSITORY_ATOMIC_MUTATION: unique symbol = Symbol('OFFLINE_REPOSITORY_ATOMIC_MUTATION');
+
+export type OfflineReplicaTransientWriteReason = 'concurrent_revision' | 'sqlite_busy' | 'sqlite_locked';
+
+/** Internal typed boundary for a local write that is safe to recompute once from a fresh snapshot. */
+export class OfflineReplicaTransientWriteError extends Error {
+  constructor(
+    readonly reason: OfflineReplicaTransientWriteReason,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'OfflineReplicaTransientWriteError';
+  }
+}
+
+export function normalizeOfflineReplicaTransientWriteError(error: unknown): unknown {
+  if (error instanceof OfflineReplicaTransientWriteError) return error;
+  const code =
+    typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code.toUpperCase()
+      : '';
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const normalizedMessage = message.toUpperCase();
+  if (code.includes('SQLITE_BUSY') || normalizedMessage.includes('SQLITE_BUSY')) {
+    return new OfflineReplicaTransientWriteError('sqlite_busy', message || 'SQLite is busy.', { cause: error });
+  }
+  if (
+    code.includes('SQLITE_LOCKED') ||
+    normalizedMessage.includes('SQLITE_LOCKED') ||
+    message.includes('database is locked') ||
+    message.includes('database table is locked')
+  ) {
+    return new OfflineReplicaTransientWriteError('sqlite_locked', message || 'SQLite database is locked.', { cause: error });
+  }
+  return error;
+}

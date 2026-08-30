@@ -63,6 +63,8 @@ export interface OfflineReadRequestPlan {
    * winning remote response cancels and suppresses the slower local read.
    */
   readStrategy?: OfflineReadStrategy;
+  /** Serializes read-only response projection behind replica mutations. Do not enable when projection starts a replica mutation itself. */
+  serializeResponseProjection?: boolean;
   /**
    * Persists and projects a remote response, or projects a local fallback.
    *

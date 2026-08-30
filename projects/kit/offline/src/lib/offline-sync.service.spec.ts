@@ -14,7 +14,7 @@ import { OfflineNetworkService } from './offline-network.service';
 import { OfflineMutationAdmissionService, OfflineMutationPersistenceDisabledError } from './offline-mutation-admission.service';
 import { OfflineReplicaPullService, OfflineReplicaSchemaMismatchError } from './offline-replica-pull.service';
 import { OfflineReplicaMutationCoordinator } from './offline-replica-mutation-coordinator';
-import { OFFLINE_REPOSITORY_ATOMIC_MUTATION } from './offline-repository-concurrency';
+import { OFFLINE_REPOSITORY_ATOMIC_MUTATION, OfflineReplicaTransientWriteError } from './offline-repository-concurrency';
 import {
   defineOfflineReplicaSchema,
   defineReplicaEntity,
@@ -540,6 +540,40 @@ describe('OfflineSyncService', () => {
   });
 
   it.each([
+    [
+      'enqueue',
+      async () => {
+        await service.enqueue(
+          {
+            scopeId: '10',
+            aggregateType: 'documents',
+            identity: { kind: 'generated', localId: 'atomic-owner-enqueue-new', remoteId: 42 },
+            operation: 'documents.create',
+            payload: { title: 'new' },
+          },
+          { flush: false },
+        );
+      },
+    ],
+    [
+      'enqueuePreparedBatch',
+      async () => {
+        await service.enqueuePreparedBatch(
+          async () => [
+            {
+              request: {
+                scopeId: '10',
+                aggregateType: 'documents',
+                identity: { kind: 'generated' as const, localId: 'atomic-owner-batch-new', remoteId: 43 },
+                operation: 'documents.create',
+                payload: { title: 'batch' },
+              },
+            },
+          ],
+          { flush: false },
+        );
+      },
+    ],
     ['discard', async (commandId: string) => service.discard(commandId, { flush: false })],
     [
       'retryNow',
@@ -551,7 +585,7 @@ describe('OfflineSyncService', () => {
       },
     ],
     ['discardAllPending', async () => service.discardAllPending()],
-  ] as const)('%s reads commands through the repository owned by the atomic mutation', async (_name, action) => {
+  ] as const)('%s uses only reads owned by the atomic mutation', async (_name, action) => {
     const commandId = await service.enqueue(
       {
         scopeId: '10',
@@ -566,12 +600,36 @@ describe('OfflineSyncService', () => {
       [OFFLINE_REPOSITORY_ATOMIC_MUTATION]?: <T>(operation: (owner: OfflineRepository) => Promise<T>) => Promise<T>;
     };
     const rootGetCommandsForUser = vi.mocked(repository.getCommandsForUser!);
-    const ownerGetCommandsForUser = vi.fn(async (userId: number) =>
+    const rootGetReplicaRow = vi.mocked(repository.getReplicaRow);
+    const rootGetReplicaRowIncludingPendingDelete = vi.mocked(repository.getReplicaRowIncludingPendingDelete!);
+    const rootGetReplicaRowByRemoteIdentity = vi.mocked(repository.getReplicaRowByRemoteIdentity);
+    const rootGetPullAttentions = vi.mocked(repository.getPullAttentions!);
+    const originalGetReplicaRow = rootGetReplicaRow.getMockImplementation()!;
+    const originalGetReplicaRowIncludingPendingDelete = rootGetReplicaRowIncludingPendingDelete.getMockImplementation()!;
+    const originalGetReplicaRowByRemoteIdentity = rootGetReplicaRowByRemoteIdentity.getMockImplementation()!;
+    const originalGetPullAttentions = rootGetPullAttentions.getMockImplementation()!;
+    const ownerGetCommandsForUser = vi.fn(async (userId: OfflinePrincipalId) =>
       commands.filter((command) => command.userId === userId).map((command) => structuredClone(command)),
     );
-    const owner = { ...repository, getCommandsForUser: ownerGetCommandsForUser } as OfflineRepository;
+    const ownerGetReplicaRow = vi.fn(originalGetReplicaRow);
+    const ownerGetReplicaRowIncludingPendingDelete = vi.fn(originalGetReplicaRowIncludingPendingDelete);
+    const ownerGetReplicaRowByRemoteIdentity = vi.fn(originalGetReplicaRowByRemoteIdentity);
+    const ownerGetPullAttentions = vi.fn(originalGetPullAttentions);
+    const owner = {
+      ...repository,
+      getCommandsForUser: ownerGetCommandsForUser,
+      getReplicaRow: ownerGetReplicaRow,
+      getReplicaRowIncludingPendingDelete: ownerGetReplicaRowIncludingPendingDelete,
+      getReplicaRowByRemoteIdentity: ownerGetReplicaRowByRemoteIdentity,
+      getPullAttentions: ownerGetPullAttentions,
+    } as OfflineRepository;
     let atomicMutationActive = false;
     let rootReadsDuringAtomicMutation = 0;
+    const failRootReadDuringAtomicMutation = (): void => {
+      if (!atomicMutationActive) return;
+      rootReadsDuringAtomicMutation += 1;
+      throw new Error('Use the repository passed to an atomic mutation for snapshot reads.');
+    };
     repository[OFFLINE_REPOSITORY_ATOMIC_MUTATION] = (operation) => {
       atomicMutationActive = true;
       return operation(owner).finally(() => {
@@ -580,11 +638,24 @@ describe('OfflineSyncService', () => {
     };
     rootGetCommandsForUser.mockClear();
     rootGetCommandsForUser.mockImplementation(async (userId: OfflinePrincipalId) => {
-      if (atomicMutationActive) {
-        rootReadsDuringAtomicMutation += 1;
-        throw new Error('Use the repository passed to an atomic mutation for snapshot reads.');
-      }
+      failRootReadDuringAtomicMutation();
       return commands.filter((command) => command.userId === userId).map((command) => structuredClone(command));
+    });
+    rootGetReplicaRow.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetReplicaRow(...args);
+    });
+    rootGetReplicaRowIncludingPendingDelete.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetReplicaRowIncludingPendingDelete(...args);
+    });
+    rootGetReplicaRowByRemoteIdentity.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetReplicaRowByRemoteIdentity(...args);
+    });
+    rootGetPullAttentions.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetPullAttentions(...args);
     });
 
     await expect(action(commandId)).resolves.toBeUndefined();
@@ -3766,9 +3837,7 @@ describe('OfflineSyncService', () => {
 
   it.each([0, 408])('background遷移をまたいだpullのstatus %sは報告せずforeground復帰後に再同期する', async (status) => {
     let rejectSuspendedPull!: (error: unknown) => void;
-    pull.mockImplementationOnce(
-      () => new Promise<void>((_resolve, reject) => (rejectSuspendedPull = reject)),
-    );
+    pull.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => (rejectSuspendedPull = reject)));
     connected.set(true);
     await service.initialize();
     await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
@@ -4028,12 +4097,45 @@ describe('OfflineSyncService', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('transactReplica failureはrejectしbackground flushはErrorHandlerへ渡す', async () => {
+  it('transport成功後の一時的なlocal ACK failureは通信を再送せずfresh snapshotで確定する', async () => {
+    const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository;
+    const originalTransact = vi.mocked(repository.transactReplica).getMockImplementation()!;
+    let remainingFailures = 1;
+    vi.mocked(repository.transactReplica).mockImplementation(async (transaction) => {
+      if (transaction.putCommands?.some((command) => command.state === 'awaiting_pull') && remainingFailures > 0) {
+        remainingFailures -= 1;
+        throw new OfflineReplicaTransientWriteError('sqlite_busy', 'SQLITE_BUSY');
+      }
+      return originalTransact(transaction);
+    });
+    await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: '1' },
+        operation: 'documents.upsert',
+        payload: {},
+      },
+      { flush: false },
+    );
+    connected.set(true);
+    await service.flush();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(service.pendingCommands()[0]).toMatchObject({
+      state: 'awaiting_pull',
+      lastErrorCode: null,
+      serverCommitUnknown: false,
+    });
+    expect(handleError).not.toHaveBeenCalled();
+  });
+
+  it('繰り返すlocal ACK failureはlocal_completionとして記録しbackground flushはErrorHandlerへ渡す', async () => {
     const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository;
     const originalTransact = vi.mocked(repository.transactReplica).getMockImplementation()!;
     vi.mocked(repository.transactReplica).mockImplementation(async (transaction) => {
       if (transaction.putCommands?.some((command) => command.state === 'awaiting_pull')) {
-        throw new Error('transaction failed');
+        throw new OfflineReplicaTransientWriteError('sqlite_locked', 'SQLITE_LOCKED');
       }
       return originalTransact(transaction);
     });
@@ -4049,11 +4151,18 @@ describe('OfflineSyncService', () => {
     );
     connected.set(true);
     await service.refreshSession();
-    await vi.waitFor(() => expect(handleError).toHaveBeenCalledWith(expect.objectContaining({ message: 'transaction failed' })));
+    await vi.waitFor(() =>
+      expect(handleError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'OfflineLocalCompletionError',
+          message: 'Offline command reached the server but local acknowledgement could not be persisted.',
+        }),
+      ),
+    );
 
     await service.refreshSession();
     await expect(service.flush()).resolves.toBeUndefined();
-    expect(service.pendingCommands()[0]).toMatchObject({ state: 'retry_wait', lastErrorCode: 'network' });
+    expect(service.pendingCommands()[0]).toMatchObject({ state: 'retry_wait', lastErrorCode: 'local_completion' });
   });
 
   it('executor error without integer statusもsendingに残さずretry_waitへ戻す', async () => {
