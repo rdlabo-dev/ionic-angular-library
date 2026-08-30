@@ -97,7 +97,7 @@ describe('offlineInterceptor', () => {
 
     const transportResponse = new HttpResponse({ body: { value: 'remote' }, status: 200 });
     const projectResponse = vi.fn(async () => transportResponse);
-    resolve.mockReturnValue({ kind: 'read', readLocal: vi.fn(), projectResponse });
+    resolve.mockReturnValue({ kind: 'read', readLocal: vi.fn(), projectResponse, serializeResponseProjection: true });
 
     const projected = firstValueFrom(run(new HttpRequest('GET', '/bootstrap'), () => of(transportResponse)));
     await new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -106,6 +106,19 @@ describe('offlineInterceptor', () => {
     releaseMutation();
     await mutation;
     await expect(projected).resolves.toBe(transportResponse);
+    expect(projectResponse).toHaveBeenCalledOnce();
+  });
+
+  it('mutationを開始する投影はreplica laneの外で実行する', async () => {
+    const coordinator = TestBed.inject(OfflineReplicaMutationCoordinator);
+    const transportResponse = new HttpResponse({ body: { value: 'remote' }, status: 200 });
+    const projectResponse = vi.fn(async () => {
+      await coordinator.run(async () => undefined);
+      return transportResponse;
+    });
+    resolve.mockReturnValue({ kind: 'read', readLocal: vi.fn(), projectResponse });
+
+    await expect(firstValueFrom(run(new HttpRequest('GET', '/status'), () => of(transportResponse)))).resolves.toBe(transportResponse);
     expect(projectResponse).toHaveBeenCalledOnce();
   });
 

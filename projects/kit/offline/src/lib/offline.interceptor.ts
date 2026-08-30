@@ -248,7 +248,10 @@ function projectReadResponse(
 ): Observable<HttpEvent<unknown>> {
   if (!(event instanceof AngularHttpResponse) || !plan.projectResponse) return of(event);
   const source = event.headers.get(OFFLINE_RESPONSE_HEADER) === 'local' ? 'local' : 'remote';
-  return from(replicaMutations.runSerializedRead(() => plan.projectResponse!(event, source))).pipe(
+  const projection = plan.serializeResponseProjection
+    ? replicaMutations.runSerializedRead(() => plan.projectResponse!(event, source))
+    : plan.projectResponse(event, source);
+  return from(projection).pipe(
     map((response) =>
       source === 'local' ? response.clone({ headers: response.headers.set(OFFLINE_RESPONSE_HEADER, 'local') }) : response,
     ),
