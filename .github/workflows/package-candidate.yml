@@ -112,7 +112,7 @@ jobs:
           for (const project of projects) {
             execFileSync(
               'npm',
-              ['pack', `dist/${project}`, '--ignore-scripts', '--pack-destination', process.env.RUNNER_TEMP + '/npm-candidate'],
+              ['pack', `./dist/${project}`, '--ignore-scripts', '--pack-destination', process.env.RUNNER_TEMP + '/npm-candidate'],
               { stdio: 'inherit' },
             );
           }
