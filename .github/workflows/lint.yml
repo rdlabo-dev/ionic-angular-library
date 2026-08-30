@@ -8,6 +8,10 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest

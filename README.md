@@ -33,7 +33,7 @@ Native v22 applications require an iOS/iPadOS deployment target of 16.4 or later
 All libraries (including kit) share one version line and are released together via `npm run release` (`np --no-tests --no-publish`) → `v*` tag → GitHub Actions `release.yml`.
 
 - Stable `vX.Y.Z` → npm `latest`
-- Prerelease `vX.Y.Z-N` (np style) → npm dist-tag **`beta`** (version string stays `X.Y.Z-N`)
+- Prerelease `vX.Y.Z-N` (np style) → npm dist-tag **`next`** (version string stays `X.Y.Z-N`)
 
 ### Kit Auth demo
 
@@ -43,6 +43,26 @@ The demo app includes a **Kit** tab with a Firebase Auth harness (`/main/kit/aut
 2. `npm start` — open the Kit tab.
 3. `npm run e2e` — Playwright signs up with a UUID email; `window.__E2E__` skips email confirmation.
 4. `npm run cap` — copy a production build to iOS/Android for device checks (e.g. `kitAuthInput` autofill).
+
+<!-- rdlabo-docs-omit -->
+
+## Prerelease channels
+
+This repository publishes its four Angular library projects as one npm candidate set. An open, non-draft pull request can publish all four packages to the npm `beta` dist-tag after its `Lint` and `Package Candidate` workflows pass. A repository owner or maintainer must add a comment whose entire body is:
+
+```text
+/beta
+```
+
+The request authorizes only the pull request head SHA that existed when the comment was added. Any new commit requires CI to pass again and a fresh owner or maintainer `/beta` comment. Fork pull requests are supported. A pull request that changes a release-gating workflow cannot be beta-published until those workflow changes land on `main`.
+
+Before publishing begins, the release workflow verifies that the immutable artifact contains exactly `@rdlabo/ionic-angular-kit`, `@rdlabo/ionic-angular-photo-editor`, `@rdlabo/ionic-angular-scroll-header`, and `@rdlabo/ngx-cdk-scroll-strategies`, all at the same `<base>-beta.pr<PR number>.sha<12-character SHA>` version. Notification failures cannot invalidate a successful npm publish.
+
+When a pull request is merged into `main`, the same package set is automatically published to `beta` only after `Lint` and `Package Candidate` succeed for that exact merge commit. Direct pushes to `main` do not publish a candidate.
+
+Only `npm run release` creates a release tag. Stable `vX.Y.Z` tags publish every library to npm `latest`; revision/prerelease tags publish every library to `next`. Neither `beta` nor `next` publishing changes the npm `latest` dist-tag.
+
+<!-- /rdlabo-docs-omit -->
 
 ## Maintainers
 
