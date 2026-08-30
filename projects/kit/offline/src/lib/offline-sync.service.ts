@@ -357,7 +357,7 @@ export class OfflineSyncService {
     return this.#serializeReplicaMutation(async (repository) => {
       await this.#ensureInitialized();
       if (!this.#isCurrent(generation)) throw new Error('Offline session changed before prepared replacement.');
-      const knownCommands = await this.#readKnownCommands();
+      const knownCommands = await this.#readKnownCommands(repository);
       const replaced = knownCommands.find((command) => command.commandId === commandId);
       if (!replaced) throw new Error(`Offline command ${commandId} no longer exists.`);
       this.#assertDiscardable([replaced]);
@@ -387,7 +387,7 @@ export class OfflineSyncService {
     return this.#serializeReplicaMutation(async (repository) => {
       await this.#ensureInitialized();
       if (!this.#isCurrent(generation)) throw new Error('Offline session changed before prepared aggregate replacement.');
-      const knownCommands = await this.#readKnownCommands();
+      const knownCommands = await this.#readKnownCommands(repository);
       const selected = knownCommands.find((command) => command.commandId === commandId);
       if (!selected) throw new Error(`Offline command ${commandId} no longer exists.`);
       const aggregateKey = this.#aggregateKey(selected);
@@ -445,7 +445,7 @@ export class OfflineSyncService {
       await this.#ensureInitialized();
       if (!this.#isCurrent(generation)) throw new Error('Offline session changed before serialized replica mutation.');
       const result = await operation(repository);
-      if (this.#isCurrent(generation)) await this.#refreshState(generation);
+      if (this.#isCurrent(generation)) await this.#refreshState(generation, repository);
       return result;
     });
   }
@@ -718,7 +718,7 @@ export class OfflineSyncService {
     if (generation !== this.#generation) {
       throw new Error('Offline session changed before the command could be persisted');
     }
-    const known = await this.#readKnownCommands();
+    const known = await this.#readKnownCommands(repository);
     const remaining = [
       ...known.filter((command) => !(removeCommandIds ?? []).includes(command.commandId)),
       ...entries.map((entry) => entry.command),
@@ -729,7 +729,7 @@ export class OfflineSyncService {
       affected.set(this.#aggregateKey(entry.command), entry.command);
       if (entry.seedBaseRow !== undefined) seeds.set(this.#aggregateKey(entry.command), entry.seedBaseRow);
     }
-    const rematerialized = await this.#rematerializeAffectedAggregates(affected, remaining, seeds);
+    const rematerialized = await this.#rematerializeAffectedAggregates(affected, remaining, seeds, repository);
     await repository.transactReplica({
       putRows: rematerialized.putRows,
       removeRows: rematerialized.removeRows,
@@ -810,12 +810,12 @@ export class OfflineSyncService {
     }
   }
 
-  async #commandsForUser(userId: OfflinePrincipalId): Promise<OfflineCommand[]> {
-    return this.#repository.getCommandsForUser
-      ? this.#repository.getCommandsForUser(userId)
+  async #commandsForUser(userId: OfflinePrincipalId, repository: OfflineRepository = this.#repository): Promise<OfflineCommand[]> {
+    return repository.getCommandsForUser
+      ? repository.getCommandsForUser(userId)
       : (
           await Promise.all(
-            [...this.#knownScopes.values()].filter((scope) => scope.userId === userId).map((scope) => this.#repository.getCommands(scope)),
+            [...this.#knownScopes.values()].filter((scope) => scope.userId === userId).map((scope) => repository.getCommands(scope)),
           )
         ).flat();
   }
@@ -832,7 +832,7 @@ export class OfflineSyncService {
     // enqueue, ACK, and pull application so an old before-image cannot replace
     // a newer authoritative row after its cursor has advanced.
     const command = await this.#replicaMutations.run(async (repository) => {
-      const current = (await this.#readKnownCommands()).find((item) => item.commandId === commandId);
+      const current = (await this.#readKnownCommands(repository)).find((item) => item.commandId === commandId);
       if (!current) return null;
       this.#assertDiscardable([current]);
       this.#invalidateFlush();
@@ -857,7 +857,7 @@ export class OfflineSyncService {
       // Re-read only after every interrupted transport transition has settled.
       // An ACK may have removed the command while retryNow was waiting; never
       // resurrect such a command from an object captured before invalidation.
-      const current = (await this.#readKnownCommands()).find((item) => item.commandId === commandId);
+      const current = (await this.#readKnownCommands(repository)).find((item) => item.commandId === commandId);
       if (!current) return false;
       if (current.state !== 'retry_wait' && current.state !== 'blocked_auth' && current.serverCommitUnknown !== true) {
         throw new Error(`Offline command ${commandId} is not waiting for retry or reauthentication.`);
@@ -877,7 +877,7 @@ export class OfflineSyncService {
     const generation = this.#generation;
     if (!(await this.#restoreCurrentGeneration(generation))) return;
     const commands = await this.#replicaMutations.run(async (repository) => {
-      const current = await this.#readKnownCommands();
+      const current = await this.#readKnownCommands(repository);
       this.#assertDiscardable(current);
       this.#invalidateFlush();
       await this.#discardCommands(current, repository);
@@ -1358,7 +1358,13 @@ export class OfflineSyncService {
       serverRevision: result.clearRemoteId === true ? null : (revision ?? current.serverRevision),
       fetchedAt: Date.now(),
     };
-    const rematerialized = await this.#rematerializeAggregate(awaitingPull, latestCommands, identityUpdatedBase);
+    const rematerialized = await this.#rematerializeAggregate(
+      awaitingPull,
+      latestCommands,
+      identityUpdatedBase,
+      latestCommands,
+      repository,
+    );
     if (!this.#isCurrent(generation)) return;
     await repository.transactReplica({
       putRows: rematerialized.putRows,
@@ -1382,16 +1388,20 @@ export class OfflineSyncService {
     commands.splice(0, commands.length, ...latestCommands);
   }
 
-  async #rowForCommand(command: OfflineCommand): Promise<OfflineReplicaRow | null> {
+  async #rowForCommand(command: OfflineCommand, repository: OfflineRepository = this.#repository): Promise<OfflineReplicaRow | null> {
     const scope = { userId: command.userId, scopeId: command.scopeId };
     const entityType = this.#entityType(command);
-    return this.#getReplicaRowForSync(scope, entityType, command.identity);
+    return this.#getReplicaRowForSync(scope, entityType, command.identity, repository);
   }
 
-  #getReplicaRowForSync(scope: OfflineScope, sourceKey: string, identity: OfflineCommandIdentity): Promise<OfflineReplicaRow | null> {
+  #getReplicaRowForSync(
+    scope: OfflineScope,
+    sourceKey: string,
+    identity: OfflineCommandIdentity,
+    repository: OfflineRepository = this.#repository,
+  ): Promise<OfflineReplicaRow | null> {
     return (
-      this.#repository.getReplicaRowIncludingPendingDelete?.(scope, sourceKey, identity) ??
-      this.#repository.getReplicaRow(scope, sourceKey, identity)
+      repository.getReplicaRowIncludingPendingDelete?.(scope, sourceKey, identity) ?? repository.getReplicaRow(scope, sourceKey, identity)
     );
   }
 
@@ -1411,12 +1421,12 @@ export class OfflineSyncService {
   }
 
   async #discardCommands(discarded: readonly OfflineCommand[], repository: OfflineRepository): Promise<void> {
-    const all = await this.#readKnownCommands();
+    const all = await this.#readKnownCommands(repository);
     const discardedIds = new Set(discarded.map((command) => command.commandId));
     const affected = new Map<string, OfflineCommand>();
     for (const command of discarded) affected.set(this.#aggregateKey(command), command);
     const remaining = all.filter((item) => !discardedIds.has(item.commandId));
-    const rematerialized = await this.#rematerializeAffectedAggregates(affected, remaining);
+    const rematerialized = await this.#rematerializeAffectedAggregates(affected, remaining, new Map(), repository);
     await repository.transactReplica({
       putRows: rematerialized.putRows,
       removeRows: rematerialized.removeRows,
@@ -1428,6 +1438,7 @@ export class OfflineSyncService {
     affected: ReadonlyMap<string, OfflineCommand>,
     remaining: readonly OfflineCommand[],
     seeds: ReadonlyMap<string, OfflineReplicaRow | null> = new Map(),
+    repository: OfflineRepository = this.#repository,
   ): Promise<Pick<OfflineReplicaTransaction, 'putRows' | 'removeRows'>> {
     const putRows: OfflineReplicaRow[] = [];
     const removeRows: OfflineReplicaRowKey[] = [];
@@ -1439,6 +1450,7 @@ export class OfflineSyncService {
         remainingForAggregate,
         seeds.has(key) ? seeds.get(key) : undefined,
         footprintCommands,
+        repository,
       );
       putRows.push(...(rematerialized.putRows ?? []));
       removeRows.push(...(rematerialized.removeRows ?? []));
@@ -1451,11 +1463,12 @@ export class OfflineSyncService {
     remaining: readonly OfflineCommand[],
     baseRow = undefined as OfflineReplicaRow | null | undefined,
     footprintCommands = remaining,
+    repository: OfflineRepository = this.#repository,
   ): Promise<Pick<OfflineReplicaTransaction, 'putRows' | 'removeRows'>> {
-    const current = baseRow === undefined ? await this.#rowForCommand(command) : baseRow;
+    const current = baseRow === undefined ? await this.#rowForCommand(command, repository) : baseRow;
     const projection = this.#replicaMutations.projectAggregateIntent({
       baseRow: current,
-      localOnlyRows: await this.#localOnlyRowsForCommands(footprintCommands),
+      localOnlyRows: await this.#localOnlyRowsForCommands(footprintCommands, repository),
       commands: remaining,
       trigger: 'local',
     });
@@ -1465,22 +1478,25 @@ export class OfflineSyncService {
     return offlineAggregateIntentMutations(projection, current);
   }
 
-  async #localOnlyRowsForCommands(commands: readonly OfflineCommand[]): Promise<OfflineReplicaRow[]> {
+  async #localOnlyRowsForCommands(
+    commands: readonly OfflineCommand[],
+    repository: OfflineRepository = this.#repository,
+  ): Promise<OfflineReplicaRow[]> {
     const keys = new Map<string, OfflineReplicaRowKey>();
     for (const command of commands) {
       for (const key of commandFootprintKeys(command)) {
         keys.set(this.#replicaRowKey(key), key);
       }
     }
-    const rows = await Promise.all([...keys.values()].map((key) => this.#getLocalOnlyRow(key)));
+    const rows = await Promise.all([...keys.values()].map((key) => this.#getLocalOnlyRow(key, repository)));
     return rows.filter((row): row is OfflineReplicaRow => row !== null);
   }
 
-  #getLocalOnlyRow(key: OfflineReplicaRowKey): Promise<OfflineReplicaRow | null> {
+  #getLocalOnlyRow(key: OfflineReplicaRowKey, repository: OfflineRepository = this.#repository): Promise<OfflineReplicaRow | null> {
     const scope = { userId: key.userId, scopeId: key.scopeId };
     return (
-      this.#repository.getReplicaRowIncludingPendingDelete?.(scope, key.sourceKey, key.identity) ??
-      this.#repository.getReplicaRow(scope, key.sourceKey, key.identity)
+      repository.getReplicaRowIncludingPendingDelete?.(scope, key.sourceKey, key.identity) ??
+      repository.getReplicaRow(scope, key.sourceKey, key.identity)
     );
   }
 
@@ -1522,7 +1538,7 @@ export class OfflineSyncService {
   ): Promise<void> {
     const failed = this.#failedCommand(command, error, serverCommitUnknown);
     await this.#serializeReplicaMutation(async (repository) => {
-      const current = row === undefined ? await this.#rowForCommand(command) : row;
+      const current = row === undefined ? await this.#rowForCommand(command, repository) : row;
       if (!this.#isCurrent(generation)) return;
       if (current) {
         await repository.transactReplica({
@@ -1698,10 +1714,10 @@ export class OfflineSyncService {
     }
   }
 
-  async #readKnownCommands(): Promise<OfflineCommand[]> {
+  async #readKnownCommands(repository: OfflineRepository = this.#repository): Promise<OfflineCommand[]> {
     const userId = this.#activeUserId;
     if (userId === null) return [];
-    const commands = (await this.#commandsForUser(userId))
+    const commands = (await this.#commandsForUser(userId, repository))
       .filter((command) => this.#knownScopes.has(this.#scopeKey({ userId: command.userId, scopeId: command.scopeId })))
       .sort(compareOfflineCommands);
     this.#rememberCreatedAt(commands);
@@ -1720,10 +1736,10 @@ export class OfflineSyncService {
     for (const command of commands) this.#lastCommandCreatedAt = Math.max(this.#lastCommandCreatedAt, command.createdAt);
   }
 
-  async #refreshState(generation = this.#generation): Promise<void> {
-    const commands = await this.#readKnownCommands();
+  async #refreshState(generation = this.#generation, repository: OfflineRepository = this.#repository): Promise<void> {
+    const commands = await this.#readKnownCommands(repository);
     const attentions =
-      this.#activeUserId !== null && this.#repository.getPullAttentions ? await this.#repository.getPullAttentions(this.#activeUserId) : [];
+      this.#activeUserId !== null && repository.getPullAttentions ? await repository.getPullAttentions(this.#activeUserId) : [];
     if (!this.#isCurrent(generation)) return;
     this.#commands.set(commands);
     this.#pullAttentions.set(attentions);
@@ -1778,7 +1794,7 @@ export class OfflineSyncService {
     const transition = this.#serializeReplicaMutation(async (repository) => {
       if (!this.#isCurrent(generation)) return null;
       const scope = { userId: command.userId, scopeId: command.scopeId };
-      const current = (await this.#repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
+      const current = (await repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
       if (!current || !['pending', 'retry_wait'].includes(current.state)) return null;
       const sending: OfflineCommand = {
         ...current,
@@ -1802,7 +1818,7 @@ export class OfflineSyncService {
     return this.#serializeReplicaMutation(async (repository) => {
       if (!this.#isCurrent(generation)) return null;
       const scope = { userId: command.userId, scopeId: command.scopeId };
-      const current = (await this.#repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
+      const current = (await repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
       if (!current || current.state !== 'sending') return null;
       const transportCommand = { ...current, serverCommitUnknown: true };
       await repository.putCommand(transportCommand);

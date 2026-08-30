@@ -14,6 +14,7 @@ import { OfflineNetworkService } from './offline-network.service';
 import { OfflineMutationAdmissionService, OfflineMutationPersistenceDisabledError } from './offline-mutation-admission.service';
 import { OfflineReplicaPullService, OfflineReplicaSchemaMismatchError } from './offline-replica-pull.service';
 import { OfflineReplicaMutationCoordinator } from './offline-replica-mutation-coordinator';
+import { OFFLINE_REPOSITORY_ATOMIC_MUTATION } from './offline-repository-concurrency';
 import {
   defineOfflineReplicaSchema,
   defineReplicaEntity,
@@ -28,6 +29,7 @@ import {
   OFFLINE_REPOSITORY,
   type OfflineCommand,
   type OfflineCommandIdentity,
+  type OfflinePrincipalId,
   type OfflinePullAttention,
   type OfflineReplicaAddress,
   type OfflineReplicaRow,
@@ -535,6 +537,60 @@ describe('OfflineSyncService', () => {
 
     expect(rows.find((row) => row.sourceKey === 'document_views')?.values).toEqual({ title: 'Baseline' });
     expect(commands).toEqual([]);
+  });
+
+  it.each([
+    ['discard', async (commandId: string) => service.discard(commandId, { flush: false })],
+    [
+      'retryNow',
+      async (commandId: string) => {
+        commands = commands.map((command) =>
+          command.commandId === commandId ? { ...command, state: 'retry_wait', retryAt: Date.now() } : command,
+        );
+        await service.retryNow(commandId);
+      },
+    ],
+    ['discardAllPending', async () => service.discardAllPending()],
+  ] as const)('%s reads commands through the repository owned by the atomic mutation', async (_name, action) => {
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: `atomic-owner-${_name}` },
+        operation: 'documents.create',
+        payload: { title: 'queued' },
+      },
+      { flush: false },
+    );
+    const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository & {
+      [OFFLINE_REPOSITORY_ATOMIC_MUTATION]?: <T>(operation: (owner: OfflineRepository) => Promise<T>) => Promise<T>;
+    };
+    const rootGetCommandsForUser = vi.mocked(repository.getCommandsForUser!);
+    const ownerGetCommandsForUser = vi.fn(async (userId: number) =>
+      commands.filter((command) => command.userId === userId).map((command) => structuredClone(command)),
+    );
+    const owner = { ...repository, getCommandsForUser: ownerGetCommandsForUser } as OfflineRepository;
+    let atomicMutationActive = false;
+    let rootReadsDuringAtomicMutation = 0;
+    repository[OFFLINE_REPOSITORY_ATOMIC_MUTATION] = (operation) => {
+      atomicMutationActive = true;
+      return operation(owner).finally(() => {
+        atomicMutationActive = false;
+      });
+    };
+    rootGetCommandsForUser.mockClear();
+    rootGetCommandsForUser.mockImplementation(async (userId: OfflinePrincipalId) => {
+      if (atomicMutationActive) {
+        rootReadsDuringAtomicMutation += 1;
+        throw new Error('Use the repository passed to an atomic mutation for snapshot reads.');
+      }
+      return commands.filter((command) => command.userId === userId).map((command) => structuredClone(command));
+    });
+
+    await expect(action(commandId)).resolves.toBeUndefined();
+
+    expect(ownerGetCommandsForUser).toHaveBeenCalledWith(1);
+    expect(rootReadsDuringAtomicMutation).toBe(0);
   });
 
   it('pull適用中の複数command一括discardは最新confirmed companionを待って復元する', async () => {
