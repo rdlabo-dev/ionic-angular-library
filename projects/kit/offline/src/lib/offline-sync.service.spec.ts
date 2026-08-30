@@ -540,6 +540,40 @@ describe('OfflineSyncService', () => {
   });
 
   it.each([
+    [
+      'enqueue',
+      async () => {
+        await service.enqueue(
+          {
+            scopeId: '10',
+            aggregateType: 'documents',
+            identity: { kind: 'generated', localId: 'atomic-owner-enqueue-new', remoteId: 42 },
+            operation: 'documents.create',
+            payload: { title: 'new' },
+          },
+          { flush: false },
+        );
+      },
+    ],
+    [
+      'enqueuePreparedBatch',
+      async () => {
+        await service.enqueuePreparedBatch(
+          async () => [
+            {
+              request: {
+                scopeId: '10',
+                aggregateType: 'documents',
+                identity: { kind: 'generated' as const, localId: 'atomic-owner-batch-new', remoteId: 43 },
+                operation: 'documents.create',
+                payload: { title: 'batch' },
+              },
+            },
+          ],
+          { flush: false },
+        );
+      },
+    ],
     ['discard', async (commandId: string) => service.discard(commandId, { flush: false })],
     [
       'retryNow',
@@ -551,7 +585,7 @@ describe('OfflineSyncService', () => {
       },
     ],
     ['discardAllPending', async () => service.discardAllPending()],
-  ] as const)('%s reads commands through the repository owned by the atomic mutation', async (_name, action) => {
+  ] as const)('%s uses only reads owned by the atomic mutation', async (_name, action) => {
     const commandId = await service.enqueue(
       {
         scopeId: '10',
@@ -566,12 +600,36 @@ describe('OfflineSyncService', () => {
       [OFFLINE_REPOSITORY_ATOMIC_MUTATION]?: <T>(operation: (owner: OfflineRepository) => Promise<T>) => Promise<T>;
     };
     const rootGetCommandsForUser = vi.mocked(repository.getCommandsForUser!);
-    const ownerGetCommandsForUser = vi.fn(async (userId: number) =>
+    const rootGetReplicaRow = vi.mocked(repository.getReplicaRow);
+    const rootGetReplicaRowIncludingPendingDelete = vi.mocked(repository.getReplicaRowIncludingPendingDelete!);
+    const rootGetReplicaRowByRemoteIdentity = vi.mocked(repository.getReplicaRowByRemoteIdentity);
+    const rootGetPullAttentions = vi.mocked(repository.getPullAttentions!);
+    const originalGetReplicaRow = rootGetReplicaRow.getMockImplementation()!;
+    const originalGetReplicaRowIncludingPendingDelete = rootGetReplicaRowIncludingPendingDelete.getMockImplementation()!;
+    const originalGetReplicaRowByRemoteIdentity = rootGetReplicaRowByRemoteIdentity.getMockImplementation()!;
+    const originalGetPullAttentions = rootGetPullAttentions.getMockImplementation()!;
+    const ownerGetCommandsForUser = vi.fn(async (userId: OfflinePrincipalId) =>
       commands.filter((command) => command.userId === userId).map((command) => structuredClone(command)),
     );
-    const owner = { ...repository, getCommandsForUser: ownerGetCommandsForUser } as OfflineRepository;
+    const ownerGetReplicaRow = vi.fn(originalGetReplicaRow);
+    const ownerGetReplicaRowIncludingPendingDelete = vi.fn(originalGetReplicaRowIncludingPendingDelete);
+    const ownerGetReplicaRowByRemoteIdentity = vi.fn(originalGetReplicaRowByRemoteIdentity);
+    const ownerGetPullAttentions = vi.fn(originalGetPullAttentions);
+    const owner = {
+      ...repository,
+      getCommandsForUser: ownerGetCommandsForUser,
+      getReplicaRow: ownerGetReplicaRow,
+      getReplicaRowIncludingPendingDelete: ownerGetReplicaRowIncludingPendingDelete,
+      getReplicaRowByRemoteIdentity: ownerGetReplicaRowByRemoteIdentity,
+      getPullAttentions: ownerGetPullAttentions,
+    } as OfflineRepository;
     let atomicMutationActive = false;
     let rootReadsDuringAtomicMutation = 0;
+    const failRootReadDuringAtomicMutation = (): void => {
+      if (!atomicMutationActive) return;
+      rootReadsDuringAtomicMutation += 1;
+      throw new Error('Use the repository passed to an atomic mutation for snapshot reads.');
+    };
     repository[OFFLINE_REPOSITORY_ATOMIC_MUTATION] = (operation) => {
       atomicMutationActive = true;
       return operation(owner).finally(() => {
@@ -580,11 +638,24 @@ describe('OfflineSyncService', () => {
     };
     rootGetCommandsForUser.mockClear();
     rootGetCommandsForUser.mockImplementation(async (userId: OfflinePrincipalId) => {
-      if (atomicMutationActive) {
-        rootReadsDuringAtomicMutation += 1;
-        throw new Error('Use the repository passed to an atomic mutation for snapshot reads.');
-      }
+      failRootReadDuringAtomicMutation();
       return commands.filter((command) => command.userId === userId).map((command) => structuredClone(command));
+    });
+    rootGetReplicaRow.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetReplicaRow(...args);
+    });
+    rootGetReplicaRowIncludingPendingDelete.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetReplicaRowIncludingPendingDelete(...args);
+    });
+    rootGetReplicaRowByRemoteIdentity.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetReplicaRowByRemoteIdentity(...args);
+    });
+    rootGetPullAttentions.mockImplementation(async (...args) => {
+      failRootReadDuringAtomicMutation();
+      return originalGetPullAttentions(...args);
     });
 
     await expect(action(commandId)).resolves.toBeUndefined();
@@ -3766,9 +3837,7 @@ describe('OfflineSyncService', () => {
 
   it.each([0, 408])('background遷移をまたいだpullのstatus %sは報告せずforeground復帰後に再同期する', async (status) => {
     let rejectSuspendedPull!: (error: unknown) => void;
-    pull.mockImplementationOnce(
-      () => new Promise<void>((_resolve, reject) => (rejectSuspendedPull = reject)),
-    );
+    pull.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => (rejectSuspendedPull = reject)));
     connected.set(true);
     await service.initialize();
     await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());

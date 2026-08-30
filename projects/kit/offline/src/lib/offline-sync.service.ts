@@ -401,7 +401,7 @@ export class OfflineSyncService {
       const materializations: MaterializedOfflineEnqueue[] = [];
       for (const [index, entry] of prepared.entries()) {
         this.#assertEnqueueScope(session, entry.request.scopeId);
-        materializations.push(await this.#materializeEnqueue(session.userId, entry.request, replaced[index]));
+        materializations.push(await this.#materializeEnqueue(session.userId, entry.request, repository, replaced[index]));
       }
       const retained = knownCommands.filter((command) => !replaced.some((item) => item.commandId === command.commandId));
       this.#assertDistinctBatchFootprints(materializations, retained, true);
@@ -463,8 +463,8 @@ export class OfflineSyncService {
   ): Promise<string> {
     const session = await this.#beginEnqueueSession(generation);
     this.#assertEnqueueScope(session, request.scopeId);
-    const materialization = await this.#materializeEnqueue(session.userId, request, replaced);
-    const currentCommands = await this.#commandsForUser(session.userId);
+    const materialization = await this.#materializeEnqueue(session.userId, request, repository, replaced);
+    const currentCommands = await this.#commandsForUser(session.userId, repository);
     const retainedCommands = replaced ? currentCommands.filter((command) => command.commandId !== replaced.commandId) : currentCommands;
     this.#assertDistinctBatchFootprints([materialization], retainedCommands);
     await this.#assertOutboxCapacity(
@@ -487,14 +487,14 @@ export class OfflineSyncService {
       throw new Error('Prepared offline batch must contain at least one command.');
     }
     const session = await this.#beginEnqueueSession(generation);
-    const currentCommands = await this.#commandsForUser(session.userId);
+    const currentCommands = await this.#commandsForUser(session.userId, repository);
     this.#rememberCreatedAt(currentCommands);
     const firstCreatedAt = Math.max(Date.now(), this.#lastCommandCreatedAt + 1);
     this.#lastCommandCreatedAt = firstCreatedAt + prepared.length - 1;
     const materializations: MaterializedOfflineEnqueue[] = [];
     for (const [index, entry] of prepared.entries()) {
       this.#assertEnqueueScope(session, entry.request.scopeId);
-      materializations.push(await this.#materializeEnqueue(session.userId, entry.request, undefined, firstCreatedAt + index));
+      materializations.push(await this.#materializeEnqueue(session.userId, entry.request, repository, undefined, firstCreatedAt + index));
     }
     this.#assertDistinctBatchFootprints(materializations, currentCommands);
     await this.#assertOutboxCapacity(
@@ -533,13 +533,14 @@ export class OfflineSyncService {
   async #materializeEnqueue<T>(
     userId: OfflinePrincipalId,
     request: EnqueueOfflineCommand<T>,
+    repository: OfflineRepository,
     replaced?: OfflineCommand,
     createdAt?: number,
   ): Promise<MaterializedOfflineEnqueue> {
     const scope = { userId, scopeId: request.scopeId };
     this.noteScope(scope);
     const commandIdentity = offlineCommandLookupIdentity(request.identity);
-    const normalized = await this.#normalizeEnqueueRequest(scope, request, commandIdentity);
+    const normalized = await this.#normalizeEnqueueRequest(scope, request, commandIdentity, repository);
     const commandId = crypto.randomUUID();
     const sourceKey = this.#hooks.entityType(request);
     const localOnlyFootprint = this.#normalizedLocalOnlyFootprint(scope, request.localOnlyFootprint);
@@ -557,7 +558,7 @@ export class OfflineSyncService {
       state: 'pending',
       attempts: 0,
       retryAt: null,
-      createdAt: replaced?.createdAt ?? createdAt ?? (await this.#nextCommandCreatedAt(userId)),
+      createdAt: replaced?.createdAt ?? createdAt ?? (await this.#nextCommandCreatedAt(userId, repository)),
       lastErrorCode: null,
     };
     if (localOnlyFootprint.length > 0) command = { ...command, localOnlyFootprint };
@@ -582,10 +583,10 @@ export class OfflineSyncService {
     if (schema.identity.kind === 'naturalKey' && request.identity.kind !== 'natural') {
       throw new Error(`Offline replica source "${entityType}" requires natural identity.`);
     }
-    if (request.replicaMutation === 'delete' && !this.#repository.getReplicaRowIncludingPendingDelete) {
+    if (request.replicaMutation === 'delete' && !repository.getReplicaRowIncludingPendingDelete) {
       throw new Error('Offline repository does not support durable replica delete tombstones.');
     }
-    const existing = await this.#getReplicaRowForSync(scope, entityType, commandIdentity);
+    const existing = await this.#getReplicaRowForSync(scope, entityType, commandIdentity, repository);
     const generatedIdentity = request.identity.kind === 'generated' ? request.identity : null;
     const initialRemoteId = this.#initialRemoteId(
       schema,
@@ -632,7 +633,7 @@ export class OfflineSyncService {
       }
     }
     if (remoteIdentity !== null) {
-      const mapped = await this.#repository.getReplicaRowByRemoteIdentity(scope, entityType, remoteIdentity);
+      const mapped = await repository.getReplicaRowByRemoteIdentity(scope, entityType, remoteIdentity);
       if (mapped !== null && !commandIdentityMatchesReplicaRow(schema, mapped, commandIdentity)) {
         if ('remoteId' in remoteIdentity) {
           throw new Error(`Offline replica remote id ${String(remoteIdentity.remoteId)} is already mapped to another row.`);
@@ -736,7 +737,7 @@ export class OfflineSyncService {
       putCommands: entries.map((entry) => entry.command),
       removeCommandIds,
     });
-    await this.#refreshState().catch((error) => this.#reportError(error));
+    await this.#refreshState(generation, repository).catch((error) => this.#reportError(error));
     if (options.flush !== false && this.#canSynchronize()) this.#flushInBackground();
   }
 
@@ -1271,10 +1272,11 @@ export class OfflineSyncService {
     scope: OfflineScope,
     request: EnqueueOfflineCommand<T>,
     commandIdentity: OfflineCommandIdentity,
+    repository: OfflineRepository,
   ): Promise<{ payload: T; baseRevision: string | number | null }> {
     let baseRevision = request.baseRevision ?? null;
     const sourceKey = this.#hooks.entityType(request);
-    const row = await this.#getReplicaRowForSync(scope, sourceKey, commandIdentity);
+    const row = await this.#getReplicaRowForSync(scope, sourceKey, commandIdentity, repository);
     if (row?.serverRevision != null && row.serverRevision !== baseRevision) {
       baseRevision = row.serverRevision;
     }
@@ -1303,7 +1305,7 @@ export class OfflineSyncService {
     if (result.clearRemoteId === true && result.serverRevision !== undefined) {
       throw new Error('Offline command cannot return serverRevision and clearRemoteId together.');
     }
-    const latestCommands = (await this.#readKnownCommands()).filter(
+    const latestCommands = (await this.#readKnownCommands(repository)).filter(
       (candidate) => this.#aggregateKey(candidate) === this.#aggregateKey(command),
     );
     const latestIndex = latestCommands.findIndex((candidate) => candidate.commandId === command.commandId);
@@ -1316,7 +1318,7 @@ export class OfflineSyncService {
         : revision === undefined
           ? following
           : following.map((item) => offlineCommandWithBaseRevision(item, revision));
-    const current = await this.#rowForCommand(command);
+    const current = await this.#rowForCommand(command, repository);
     if (!this.#isCurrent(generation)) return;
     if (!current) {
       throw new Error(`Offline replica row disappeared while completing command ${command.commandId}.`);
@@ -1724,8 +1726,8 @@ export class OfflineSyncService {
     return commands;
   }
 
-  async #nextCommandCreatedAt(userId: OfflinePrincipalId): Promise<number> {
-    const commands = await this.#commandsForUser(userId);
+  async #nextCommandCreatedAt(userId: OfflinePrincipalId, repository: OfflineRepository = this.#repository): Promise<number> {
+    const commands = await this.#commandsForUser(userId, repository);
     this.#rememberCreatedAt(commands);
     const createdAt = Math.max(Date.now(), this.#lastCommandCreatedAt + 1);
     this.#lastCommandCreatedAt = createdAt;
