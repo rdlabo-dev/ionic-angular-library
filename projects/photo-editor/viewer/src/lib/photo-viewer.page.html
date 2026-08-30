@@ -12,7 +12,9 @@
     </ion-buttons>
     @if (enableDelete() && imageUrls().length > 0) {
     <ion-buttons slot="end">
-      <ion-button color="photo-editor-danger" fill="solid" type="submit" (click)="remove()">{{ dictionary().delete }}</ion-button>
+      <ion-button class="button-submit" color="photo-editor-danger" fill="solid" type="button" (click)="remove()"
+        >{{ dictionary().delete }}</ion-button
+      >
     </ion-buttons>
     }
   </ion-toolbar>

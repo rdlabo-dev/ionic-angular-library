@@ -90,6 +90,9 @@ describe('PhotoViewerPage', () => {
     expect(component.enableDelete()).toBe(true);
     expect(component.enableFooterSafeArea()).toBe(true);
     expect(fixture.nativeElement.textContent).toContain('Remove photo');
+    const deleteButton = fixture.nativeElement.querySelector('ion-buttons[slot="end"] ion-button');
+    expect(deleteButton.classList.contains('button-submit')).toBe(true);
+    expect(deleteButton.getAttribute('type')).toBe('button');
   });
 
   it('applies per-image alt text and the localized close-button label', async () => {
