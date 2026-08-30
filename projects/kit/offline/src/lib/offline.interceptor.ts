@@ -54,7 +54,7 @@ export const offlineInterceptor: HttpInterceptorFn = (request, next) => {
     if (plan.readStrategy === 'fastest-first') {
       return readFastestFirst(request, plan, transport, fallback, inject(ErrorHandler), inject(OfflineReplicaMutationCoordinator));
     }
-    return readNetworkFirst(request, plan, transport, fallback);
+    return readNetworkFirst(request, plan, transport, fallback, inject(OfflineReplicaMutationCoordinator));
   }
   if (LOCAL_FIRST_MUTATION_METHODS.has(request.method)) {
     if (!inject(OFFLINE_MUTATION_PERSISTENCE_ENABLED)()) return transport();
@@ -73,10 +73,11 @@ function readNetworkFirst(
   plan: OfflineReadRequestPlan,
   transport: () => Observable<HttpEvent<unknown>>,
   fallback: OfflineRequestFallbackService,
+  replicaMutations: OfflineReplicaMutationCoordinator,
 ): Observable<HttpEvent<unknown>> {
   return defer(transport).pipe(
     catchError((error: unknown) => fallback.handle(request, error, plan) ?? throwError(() => error)),
-    concatMap((event) => projectReadResponse(event, plan)),
+    concatMap((event) => projectReadResponse(event, plan, replicaMutations)),
   );
 }
 
@@ -108,8 +109,8 @@ function readLocalFirst(
         resolveLocalAttempt(plan, errorHandler, replicaMutations).pipe(
           concatMap((localResponse) =>
             localResponse
-              ? concat(of(localResponse), drainRemoteAfterLocal(bufferedTransport$, plan))
-              : drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback),
+              ? concat(of(localResponse), drainRemoteAfterLocal(bufferedTransport$, plan, replicaMutations))
+              : drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback, replicaMutations),
           ),
         ),
       { connector: () => new ReplaySubject<MaterializedTransport>() },
@@ -133,13 +134,13 @@ function readFastestFirst(
         const localDecision$ = resolveLocalAttempt(plan, errorHandler, replicaMutations).pipe(
           concatMap((localResponse) =>
             localResponse
-              ? concat(of(localResponse), drainRemoteAfterLocal(bufferedTransport$, plan))
-              : drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback),
+              ? concat(of(localResponse), drainRemoteAfterLocal(bufferedTransport$, plan, replicaMutations))
+              : drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback, replicaMutations),
           ),
         );
         // Angular transport emits Sent/progress events before the response.
         // They are not usable read results and therefore must not win the race.
-        const remoteWinner$ = drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback).pipe(
+        const remoteWinner$ = drainRemoteNetworkFirst(bufferedTransport$, request, plan, fallback, replicaMutations).pipe(
           filter((event) => event instanceof AngularHttpResponse),
           // A remote error is not a usable response. Keep it buffered until the
           // local attempt decides whether it can satisfy the read.
@@ -162,7 +163,7 @@ function resolveLocalAttempt(
       errorHandler.handleError(localError);
       return of(null);
     }),
-    concatMap((local) => (local ? tryProjectLocal(local, plan, errorHandler) : of(null))),
+    concatMap((local) => (local ? tryProjectLocal(local, plan, errorHandler, replicaMutations) : of(null))),
     take(1),
   );
 }
@@ -196,8 +197,9 @@ function tryProjectLocal(
   cached: AngularHttpResponse<unknown>,
   plan: OfflineReadRequestPlan,
   errorHandler: ErrorHandler,
+  replicaMutations: OfflineReplicaMutationCoordinator,
 ): Observable<HttpEvent<unknown> | null> {
-  return emitTaggedLocalResponse(cached, plan).pipe(
+  return emitTaggedLocalResponse(cached, plan, replicaMutations).pipe(
     catchError((error: unknown) => {
       errorHandler.handleError(error);
       return of(null);
@@ -205,18 +207,23 @@ function tryProjectLocal(
   );
 }
 
-function emitTaggedLocalResponse(cached: AngularHttpResponse<unknown>, plan: OfflineReadRequestPlan): Observable<HttpEvent<unknown>> {
-  return projectReadResponse(cached.clone({ headers: cached.headers.set(OFFLINE_RESPONSE_HEADER, 'local') }), plan);
+function emitTaggedLocalResponse(
+  cached: AngularHttpResponse<unknown>,
+  plan: OfflineReadRequestPlan,
+  replicaMutations: OfflineReplicaMutationCoordinator,
+): Observable<HttpEvent<unknown>> {
+  return projectReadResponse(cached.clone({ headers: cached.headers.set(OFFLINE_RESPONSE_HEADER, 'local') }), plan, replicaMutations);
 }
 
 function drainRemoteAfterLocal(
   bufferedTransport$: Observable<MaterializedTransport>,
   plan: OfflineReadRequestPlan,
+  replicaMutations: OfflineReplicaMutationCoordinator,
 ): Observable<HttpEvent<unknown>> {
   return bufferedTransport$.pipe(
     dematerialize(),
     catchError((error: unknown) => (isOfflineFallbackError(error) ? EMPTY : throwError(() => error))),
-    concatMap((event) => projectReadResponse(event, plan)),
+    concatMap((event) => projectReadResponse(event, plan, replicaMutations)),
   );
 }
 
@@ -225,18 +232,23 @@ function drainRemoteNetworkFirst(
   request: HttpRequest<unknown>,
   plan: OfflineReadRequestPlan,
   fallback: OfflineRequestFallbackService,
+  replicaMutations: OfflineReplicaMutationCoordinator,
 ): Observable<HttpEvent<unknown>> {
   return bufferedTransport$.pipe(
     dematerialize(),
     catchError((error: unknown) => fallback.handle(request, error, plan) ?? throwError(() => error)),
-    concatMap((event) => projectReadResponse(event, plan)),
+    concatMap((event) => projectReadResponse(event, plan, replicaMutations)),
   );
 }
 
-function projectReadResponse(event: HttpEvent<unknown>, plan: OfflineReadRequestPlan): Observable<HttpEvent<unknown>> {
+function projectReadResponse(
+  event: HttpEvent<unknown>,
+  plan: OfflineReadRequestPlan,
+  replicaMutations: OfflineReplicaMutationCoordinator,
+): Observable<HttpEvent<unknown>> {
   if (!(event instanceof AngularHttpResponse) || !plan.projectResponse) return of(event);
   const source = event.headers.get(OFFLINE_RESPONSE_HEADER) === 'local' ? 'local' : 'remote';
-  return from(plan.projectResponse(event, source)).pipe(
+  return from(replicaMutations.runSerializedRead(() => plan.projectResponse!(event, source))).pipe(
     map((response) =>
       source === 'local' ? response.clone({ headers: response.headers.set(OFFLINE_RESPONSE_HEADER, 'local') }) : response,
     ),
