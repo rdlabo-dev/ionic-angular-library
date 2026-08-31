@@ -1021,6 +1021,11 @@ export class OfflineSyncService {
     if (command.state === 'awaiting_pull') {
       return this.#commandReconciliationRemoteId(command) ?? this.#generatedRemoteId(locator, userId, generation);
     }
+    if (command.state === 'sending') {
+      const activeSend = this.#commandSendTransitions.get(this.#commandSendKey(command, generation));
+      if (activeSend) await activeSend;
+      return this.#generatedCommandOutcome(commandId, locator, generation, userId);
+    }
     if (command.state !== 'pending') return null;
     const aggregate = known.filter((candidate) => this.#aggregateKey(candidate) === this.#aggregateKey(command));
     if (aggregate[0]?.commandId !== command.commandId) {
@@ -1047,6 +1052,16 @@ export class OfflineSyncService {
     for (const dirtyScope of dirtyScopes.values()) {
       this.#pendingPullScopes.set(this.#scopeKey(dirtyScope), dirtyScope);
     }
+    return this.#generatedCommandOutcome(commandId, locator, generation, userId);
+  }
+
+  async #generatedCommandOutcome(
+    commandId: string,
+    locator: OfflineGeneratedCommandLocator,
+    generation: number,
+    userId: OfflinePrincipalId,
+  ): Promise<OfflineGeneratedRemoteId | null> {
+    if (!this.#isCurrentUser(generation, userId)) return null;
     await this.#refreshState(generation);
     if (!this.#isCurrentUser(generation, userId)) return null;
     const completed = (await this.#readKnownCommands()).find((candidate) => candidate.commandId === commandId);

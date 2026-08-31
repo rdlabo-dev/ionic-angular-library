@@ -2498,6 +2498,93 @@ describe('OfflineSyncService', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it('通常flushが送信中にした同じcommandの結果をfast pathが待ってserver idを返す', async () => {
+    networkConnected = () => true;
+    let releaseExecute!: () => void;
+    execute.mockImplementationOnce(
+      () =>
+        new Promise<OfflineCommandResult>((resolve) => {
+          releaseExecute = () => resolve({ remoteId: 38151, response: 38151 });
+        }),
+    );
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'already-sending-race' },
+        operation: 'documents.create',
+        payload: { title: 'Already sending' },
+      },
+      { flush: false },
+    );
+    const flush = service.flush();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    expect(commands[0]).toMatchObject({ commandId, state: 'sending' });
+
+    const delivery = service.sendGeneratedCommandNow(commandId, {
+      scopeId: '10',
+      sourceKey: 'documents',
+      localId: 'already-sending-race',
+    });
+    releaseExecute();
+
+    await expect(delivery).resolves.toBe(38151);
+    await flush;
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('sendingの読取直後にactive transitionが消えてもdurableなserver idを再読込する', async () => {
+    networkConnected = () => true;
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'completed-before-map-lookup' },
+        operation: 'documents.create',
+        payload: { title: 'Completed concurrently' },
+      },
+      { flush: false },
+    );
+    commands = commands.map((command) =>
+      command.commandId === commandId ? { ...command, state: 'sending', attempts: 1, serverCommitUnknown: true } : command,
+    );
+    const repository = TestBed.inject(OFFLINE_REPOSITORY);
+    const getCommandsForUser = vi.mocked(repository.getCommandsForUser!);
+    let readCount = 0;
+    getCommandsForUser.mockImplementation(async (userId) => {
+      const snapshot = commands.filter((command) => command.userId === userId).map((command) => structuredClone(command));
+      readCount += 1;
+      if (readCount === 1) {
+        commands = commands.map((command) =>
+          command.commandId === commandId
+            ? {
+                ...command,
+                state: 'awaiting_pull',
+                serverCommitUnknown: false,
+                reconciliationIdentity: { remoteId: 38152 },
+              }
+            : command,
+        );
+        rows = rows.map((row) =>
+          row.identity.kind === 'generated' && row.identity.localId === 'completed-before-map-lookup'
+            ? { ...row, identity: { ...row.identity, remoteId: 38152 } }
+            : row,
+        );
+      }
+      return snapshot;
+    });
+
+    await expect(
+      service.sendGeneratedCommandNow(commandId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'completed-before-map-lookup',
+      }),
+    ).resolves.toBe(38152);
+    expect(readCount).toBeGreaterThanOrEqual(2);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('新規generated aggregateの即時送信で応答を失っても同じdurable commandをretry_waitに残す', async () => {
     execute.mockRejectedValueOnce({ status: 0, message: 'response lost' });
     const commandId = await service.enqueue(
