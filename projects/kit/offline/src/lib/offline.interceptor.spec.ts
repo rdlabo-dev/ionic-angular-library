@@ -236,6 +236,22 @@ describe('offlineInterceptor', () => {
     expect(readLocal).not.toHaveBeenCalled();
   });
 
+  it('local-only readはremote transportを開始せずlocal responseだけを返す', async () => {
+    const local = new HttpResponse({ body: [{ id: 'provisional' }], status: 200 });
+    const readLocal = vi.fn(async () => local);
+    resolve.mockReturnValue({ kind: 'read', readStrategy: 'local-only', readLocal });
+    const next = vi.fn(() => of(new HttpResponse({ body: [{ id: 'remote' }], status: 200 })));
+
+    const response = await firstValueFrom(run(new HttpRequest('GET', '/documents/provisional'), next));
+
+    expect(next).not.toHaveBeenCalled();
+    expect(readLocal).toHaveBeenCalledOnce();
+    expect(response instanceof HttpResponse && response.body).toEqual([{ id: 'provisional' }]);
+    expect(response instanceof HttpResponse && response.headers.get(OFFLINE_RESPONSE_HEADER)).toBe('local');
+    expect(markApiSuccess).not.toHaveBeenCalled();
+    expect(markApiFailure).not.toHaveBeenCalled();
+  });
+
   it('未登録POSTはread policyを解決せずtransportへ渡しreachabilityを更新する', async () => {
     resolve.mockReturnValue({ kind: 'read', readLocal: vi.fn() });
     const request = new HttpRequest('POST', '/groups/1/documents', {});

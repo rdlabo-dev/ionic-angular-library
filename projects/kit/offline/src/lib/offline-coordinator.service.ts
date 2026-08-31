@@ -56,6 +56,7 @@ export class OfflineCoordinatorService {
 
   readonly networkState = this.#network.state;
   readonly syncState = this.#sync.syncState;
+  readonly pendingCommands = this.#sync.pendingCommands;
   readonly pendingCount = this.#sync.pendingCount;
   readonly conflicts = this.#sync.conflicts;
   /** Device-local control for accepting new durable Outbox mutations. */

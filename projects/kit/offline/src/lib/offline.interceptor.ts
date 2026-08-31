@@ -48,6 +48,9 @@ export const offlineInterceptor: HttpInterceptorFn = (request, next) => {
     const fallback = inject(OfflineRequestFallbackService);
     const plan = registry.resolve(request);
     if (!plan) return transport();
+    if (plan.readStrategy === 'local-only') {
+      return readLocalOnly(plan, inject(ErrorHandler), inject(OfflineReplicaMutationCoordinator));
+    }
     if (plan.readStrategy === 'local-first') {
       return readLocalFirst(request, plan, transport, fallback, inject(ErrorHandler), inject(OfflineReplicaMutationCoordinator));
     }
@@ -67,6 +70,15 @@ export const offlineInterceptor: HttpInterceptorFn = (request, next) => {
   }
   return transport();
 };
+
+/** Resolves a provisional/local identity without starting remote transport. */
+function readLocalOnly(
+  plan: OfflineReadRequestPlan,
+  errorHandler: ErrorHandler,
+  replicaMutations: OfflineReplicaMutationCoordinator,
+): Observable<HttpEvent<unknown>> {
+  return resolveLocalAttempt(plan, errorHandler, replicaMutations).pipe(concatMap((response) => (response ? of(response) : EMPTY)));
+}
 
 function readNetworkFirst(
   request: HttpRequest<unknown>,

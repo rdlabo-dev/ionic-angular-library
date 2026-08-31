@@ -43,7 +43,7 @@ export function shouldCommitOfflineCollection<T>(emission: OfflineReadEmission<r
 }
 
 /** Controls GET emission order between local replica and remote transport. */
-export type OfflineReadStrategy = 'network-first' | 'local-first' | 'fastest-first';
+export type OfflineReadStrategy = 'network-first' | 'local-first' | 'fastest-first' | 'local-only';
 
 /** Product read policy backed by a local replica fallback for transport failures. */
 export interface OfflineReadRequestPlan {
@@ -61,6 +61,8 @@ export interface OfflineReadRequestPlan {
    * `fastest-first` emits whichever usable local or remote response settles
    * first. A winning local response is followed by remote revalidation; a
    * winning remote response cancels and suppresses the slower local read.
+   * `local-only` never starts HTTP transport and emits only the projected local
+   * response. Use it for provisional identities that cannot exist remotely.
    */
   readStrategy?: OfflineReadStrategy;
   /** Serializes read-only response projection behind replica mutations. Do not enable when projection starts a replica mutation itself. */

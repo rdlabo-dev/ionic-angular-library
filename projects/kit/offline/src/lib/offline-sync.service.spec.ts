@@ -40,6 +40,7 @@ import { generatedCommandIdentity, rematerializeTestAggregate } from './offline-
 import { OFFLINE_AGGREGATE_INTENT_PROJECTOR } from './offline-aggregate-intent-projector';
 import {
   OfflineCommandInFlightError,
+  OfflineImmediateCommandRejectedError,
   OfflinePayloadValidationError,
   OfflineSyncService,
   OFFLINE_RETRY_RANDOM,
@@ -396,6 +397,32 @@ describe('OfflineSyncService', () => {
     ).rejects.toThrow('read-only cache');
     expect(commands).toEqual([]);
     expect(rows).toEqual([]);
+  });
+
+  it('uses a caller-owned idempotency key once and rejects a duplicate command id before persistence', async () => {
+    const request = {
+      commandId: 'caller-owned-idempotency-key',
+      scopeId: '10',
+      aggregateType: 'documents',
+      identity: { kind: 'generated' as const, localId: 'caller-owned-1' },
+      operation: 'documents.create',
+      payload: { title: 'first' },
+    };
+
+    await expect(service.enqueue(request, { flush: false })).resolves.toBe(request.commandId);
+    await expect(
+      service.enqueue(
+        {
+          ...request,
+          identity: { kind: 'generated', localId: 'caller-owned-2' },
+          payload: { title: 'second' },
+        },
+        { flush: false },
+      ),
+    ).rejects.toThrow('is already in use');
+
+    expect(commands).toHaveLength(1);
+    expect(rows).toHaveLength(1);
   });
 
   it('rejects every new command entry point after mutation admission closes', async () => {
@@ -2287,6 +2314,461 @@ describe('OfflineSyncService', () => {
     });
     expectAwaitingPull(2);
     expect(commands.every((command) => !('remoteId' in command))).toBe(true);
+  });
+
+  it('新規generated aggregateはpre-pullを待たずdurable commandの同じ冪等IDで即時送信する', async () => {
+    execute.mockImplementationOnce(async (command, target) => {
+      expect(pull).not.toHaveBeenCalled();
+      expect(target).toEqual({ kind: 'generated', localId: 'network-first-create', remoteId: null });
+      return { remoteId: 38143, response: 38143 };
+    });
+    const commandId = await service.enqueue(
+      {
+        commandId: 'network-first-idempotency',
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'network-first-create' },
+        operation: 'documents.create',
+        payload: { title: 'Created' },
+      },
+      { flush: false },
+    );
+    expect(commandId).toBe('network-first-idempotency');
+    networkConnected = () => true;
+
+    await expect(
+      service.sendGeneratedCommandNow(commandId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'network-first-create',
+      }),
+    ).resolves.toBe(38143);
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]?.[0].commandId).toBe(commandId);
+    expect(rows[0]).toMatchObject({
+      identity: { kind: 'generated', localId: 'network-first-create', remoteId: 38143 },
+      syncState: 'pending',
+    });
+    expect(commands[0]).toMatchObject({
+      commandId,
+      state: 'awaiting_pull',
+      reconciliationIdentity: { remoteId: 38143 },
+    });
+  });
+
+  it('unrelatedな先行flushのpre-pullを待たずcreateを送信してserver idを返す', async () => {
+    networkConnected = () => true;
+    let releasePrePull!: () => void;
+    pull
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePrePull = resolve;
+          }),
+      )
+      .mockImplementationOnce(async () => {
+        commands = [];
+      });
+    execute.mockResolvedValueOnce({ remoteId: 38144, response: 38144 });
+    const activeFlush = service.flush();
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'create-during-active-flush' },
+        operation: 'documents.create',
+        payload: { title: 'Concurrent' },
+      },
+      { flush: false },
+    );
+    const delivery = service.sendGeneratedCommandNow(commandId, {
+      scopeId: '10',
+      sourceKey: 'documents',
+      localId: 'create-during-active-flush',
+    });
+
+    await expect(delivery).resolves.toBe(38144);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(pull).toHaveBeenCalledOnce();
+
+    releasePrePull();
+    await activeFlush;
+
+    expect(execute).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(commands).toEqual([]));
+    expect(rows[0]).toMatchObject({
+      identity: { kind: 'generated', localId: 'create-during-active-flush', remoteId: 38144 },
+    });
+  });
+
+  it('create A後のbackground pullを待たずcreate Bを即時送信する', async () => {
+    networkConnected = () => true;
+    let releaseBackgroundPull!: () => void;
+    pull.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseBackgroundPull = resolve;
+        }),
+    );
+    execute.mockResolvedValueOnce({ remoteId: 38145, response: 38145 }).mockResolvedValueOnce({ remoteId: 38146, response: 38146 });
+    const commandA = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'network-first-a' },
+        operation: 'documents.create',
+        payload: { title: 'A' },
+      },
+      { flush: false },
+    );
+
+    await expect(
+      service.sendGeneratedCommandNow(commandA, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'network-first-a',
+      }),
+    ).resolves.toBe(38145);
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+
+    const commandB = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'network-first-b' },
+        operation: 'documents.create',
+        payload: { title: 'B' },
+      },
+      { flush: false },
+    );
+    await expect(
+      service.sendGeneratedCommandNow(commandB, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'network-first-b',
+      }),
+    ).resolves.toBe(38146);
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(pull).toHaveBeenCalledOnce();
+    releaseBackgroundPull();
+  });
+
+  it('通常flushとfast pathが同じcommandを競合取得してもtransportは1回だけ実行する', async () => {
+    networkConnected = () => true;
+    let releasePrePull!: () => void;
+    let releaseExecute!: () => void;
+    pull.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePrePull = resolve;
+        }),
+    );
+    execute.mockImplementationOnce(
+      () =>
+        new Promise<OfflineCommandResult>((resolve) => {
+          releaseExecute = () => resolve({ remoteId: 38147, response: 38147 });
+        }),
+    );
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'same-command-race' },
+        operation: 'documents.create',
+        payload: { title: 'Race' },
+      },
+      { flush: false },
+    );
+    const flush = service.flush();
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledOnce());
+    const delivery = service.sendGeneratedCommandNow(commandId, {
+      scopeId: '10',
+      sourceKey: 'documents',
+      localId: 'same-command-race',
+    });
+    releasePrePull();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    releaseExecute();
+
+    await expect(delivery).resolves.toBe(38147);
+    await flush;
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('新規generated aggregateの即時送信で応答を失っても同じdurable commandをretry_waitに残す', async () => {
+    execute.mockRejectedValueOnce({ status: 0, message: 'response lost' });
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'network-first-response-loss' },
+        operation: 'documents.create',
+        payload: { title: 'Created once' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+
+    await expect(
+      service.sendGeneratedCommandNow(commandId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'network-first-response-loss',
+      }),
+    ).resolves.toBeNull();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]?.[0].commandId).toBe(commandId);
+    expect(commands[0]).toMatchObject({
+      commandId,
+      state: 'retry_wait',
+      serverCommitUnknown: true,
+      lastErrorCode: 'network',
+    });
+  });
+
+  it('新規generated aggregateの即時送信で確定4xxをoptimistic成功として隠さない', async () => {
+    execute.mockRejectedValueOnce({ status: 422, message: 'invalid create' });
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'network-first-rejected' },
+        operation: 'documents.create',
+        payload: { title: 'Invalid' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+
+    const delivery = service.sendGeneratedCommandNow(commandId, {
+      scopeId: '10',
+      sourceKey: 'documents',
+      localId: 'network-first-rejected',
+    });
+    await expect(delivery).rejects.toBeInstanceOf(OfflineImmediateCommandRejectedError);
+    await expect(delivery).rejects.toMatchObject({
+      name: 'OfflineImmediateCommandRejectedError',
+      state: 'rejected',
+      code: '422',
+    });
+
+    expect(commands[0]).toMatchObject({ commandId, state: 'rejected', lastErrorCode: '422' });
+  });
+
+  it('confirmed aggregateはfast pathを拒否し通常flushのpre-pull後だけ送信する', async () => {
+    rows.push({
+      userId: 1,
+      scopeId: '10',
+      sourceKey: 'documents',
+      identity: { kind: 'generated', localId: 'confirmed-document', remoteId: 55 },
+      values: { id: 55, title: 'Confirmed' },
+      confirmedValues: { id: 55, title: 'Confirmed' },
+      serverRevision: 1,
+      fetchedAt: 1,
+      syncState: 'confirmed',
+    });
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'confirmed-document' },
+        operation: 'documents.update',
+        payload: { title: 'Updated' },
+        baseRevision: 1,
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+
+    await expect(
+      service.sendGeneratedCommandNow(commandId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'confirmed-document',
+      }),
+    ).rejects.toThrow('requires a new unconfirmed aggregate');
+    expect(execute).not.toHaveBeenCalled();
+
+    let prePullCompleted = false;
+    pull.mockImplementationOnce(async () => {
+      expect(execute).not.toHaveBeenCalled();
+      prePullCompleted = true;
+    });
+    execute.mockImplementationOnce(async () => {
+      expect(prePullCompleted).toBe(true);
+      return { serverRevision: 2, response: null };
+    });
+    await service.flush();
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it('durable pull attention中はgenerated fast pathのtransportを開始しない', async () => {
+    pullAttentions.push({ userId: 1, scopeId: '10', reason: 'authorization_required', status: 401 });
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'attention-blocked-create' },
+        operation: 'documents.create',
+        payload: { title: 'Blocked' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+
+    await expect(
+      service.sendGeneratedCommandNow(commandId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'attention-blocked-create',
+      }),
+    ).resolves.toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('同一aggregateの先行intentを追い越してgenerated fast pathを送信しない', async () => {
+    await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'ordered-create' },
+        operation: 'documents.create',
+        payload: { title: 'First' },
+      },
+      { flush: false },
+    );
+    const secondId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'ordered-create' },
+        operation: 'documents.update',
+        payload: { title: 'Second' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+
+    await expect(
+      service.sendGeneratedCommandNow(secondId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'ordered-create',
+      }),
+    ).rejects.toThrow('requires the first aggregate intent');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('session generation切替後は新principalの同一locator remote idを旧callerへ返さない', async () => {
+    let releaseExecute!: () => void;
+    execute.mockImplementationOnce(
+      () =>
+        new Promise<OfflineCommandResult>((resolve) => {
+          releaseExecute = () => resolve({ remoteId: 38148, response: 38148 });
+        }),
+    );
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'shared-locator' },
+        operation: 'documents.create',
+        payload: { title: 'Old principal' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+    const delivery = service.sendGeneratedCommandNow(commandId, {
+      scopeId: '10',
+      sourceKey: 'documents',
+      localId: 'shared-locator',
+    });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+
+    service.revokeSession();
+    session = { userId: 2, scopes: [{ userId: 2, scopeId: '10' }] };
+    rows.push({
+      userId: 2,
+      scopeId: '10',
+      sourceKey: 'documents',
+      identity: { kind: 'generated', localId: 'shared-locator', remoteId: 999 },
+      values: { id: 999, title: 'New principal' },
+      confirmedValues: { id: 999, title: 'New principal' },
+      serverRevision: 1,
+      fetchedAt: 2,
+      syncState: 'confirmed',
+    });
+    networkConnected = () => false;
+    await service.refreshSession();
+    releaseExecute();
+
+    await expect(delivery).resolves.toBeNull();
+  });
+
+  it('旧principalのtransport中でも新principalの同一command idは独立して即時送信する', async () => {
+    let releaseOldExecute!: () => void;
+    execute
+      .mockImplementationOnce(
+        () =>
+          new Promise<OfflineCommandResult>((resolve) => {
+            releaseOldExecute = () => resolve({ remoteId: 38149, response: 38149 });
+          }),
+      )
+      .mockResolvedValueOnce({ remoteId: 38150, response: 38150 });
+    const sharedCommandId = 'principal-scoped-idempotency-key';
+    await service.enqueue(
+      {
+        commandId: sharedCommandId,
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'old-principal-create' },
+        operation: 'documents.create',
+        payload: { title: 'Old principal' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+    const oldDelivery = service.sendGeneratedCommandNow(sharedCommandId, {
+      scopeId: '10',
+      sourceKey: 'documents',
+      localId: 'old-principal-create',
+    });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+
+    service.revokeSession();
+    commands = commands.filter((command) => command.userId !== 1);
+    rows = rows.filter((row) => row.userId !== 1);
+    session = { userId: 2, scopes: [{ userId: 2, scopeId: '10' }] };
+    networkConnected = () => false;
+    await service.refreshSession();
+    await service.enqueue(
+      {
+        commandId: sharedCommandId,
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'new-principal-create' },
+        operation: 'documents.create',
+        payload: { title: 'New principal' },
+      },
+      { flush: false },
+    );
+    networkConnected = () => true;
+
+    await expect(
+      service.sendGeneratedCommandNow(sharedCommandId, {
+        scopeId: '10',
+        sourceKey: 'documents',
+        localId: 'new-principal-create',
+      }),
+    ).resolves.toBe(38150);
+    expect(execute).toHaveBeenCalledTimes(2);
+
+    releaseOldExecute();
+    await expect(oldDelivery).resolves.toBeNull();
   });
 
   it('session scope発見後に前回起動のsending commandをpendingへ復旧する', async () => {
