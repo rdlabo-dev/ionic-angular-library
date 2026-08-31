@@ -3380,6 +3380,47 @@ describe('OfflineSyncService', () => {
     expect(rows[0]).toMatchObject({ values: { id: 13, title: 'new local' }, syncState: 'pending' });
   });
 
+  it('同じcommand idのreplacementを新commandの削除なしで原子的に保持する', async () => {
+    const commandId = await service.enqueue(
+      {
+        commandId: 'stable-idempotency-key',
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'replace-stable-command' },
+        operation: 'documents.update',
+        payload: { title: 'rejected draft' },
+      },
+      { flush: false },
+    );
+    commands[0] = { ...commands[0]!, state: 'rejected', lastErrorCode: '422' };
+    const originalCreatedAt = commands[0]!.createdAt;
+
+    const replacementId = await service.replacePrepared(
+      commandId,
+      async () => ({
+        request: {
+          commandId,
+          scopeId: '10',
+          aggregateType: 'documents',
+          identity: { kind: 'generated', localId: 'replace-stable-command' },
+          operation: 'documents.update',
+          payload: { title: 'corrected draft' },
+        },
+      }),
+      { flush: false },
+    );
+
+    expect(replacementId).toBe(commandId);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
+      commandId,
+      state: 'pending',
+      createdAt: originalCreatedAt,
+      payload: { title: 'corrected draft' },
+    });
+    expect(rows).toContainEqual(expect.objectContaining({ values: { id: 0, title: 'corrected draft' } }));
+  });
+
   it('同じaggregateに後続commandがあるreplacementを元状態のまま拒否する', async () => {
     const oldCommandId = await service.enqueue(
       {

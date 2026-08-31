@@ -750,6 +750,8 @@ export class OfflineSyncService {
       throw new Error('Offline session changed before the command could be persisted');
     }
     const known = await this.#readKnownCommands(repository);
+    const putCommandIds = new Set(entries.map((entry) => entry.command.commandId));
+    const effectiveRemoveCommandIds = removeCommandIds?.filter((commandId) => !putCommandIds.has(commandId));
     const remaining = [
       ...known.filter((command) => !(removeCommandIds ?? []).includes(command.commandId)),
       ...entries.map((entry) => entry.command),
@@ -765,7 +767,7 @@ export class OfflineSyncService {
       putRows: rematerialized.putRows,
       removeRows: rematerialized.removeRows,
       putCommands: entries.map((entry) => entry.command),
-      removeCommandIds,
+      removeCommandIds: effectiveRemoveCommandIds,
     });
     await this.#refreshState(generation, repository).catch((error) => this.#reportError(error));
     if (options.flush !== false && this.#canSynchronize()) this.#flushInBackground();
