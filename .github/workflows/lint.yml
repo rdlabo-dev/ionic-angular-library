@@ -32,8 +32,6 @@ jobs:
             ${{ runner.os }}-angular-
       - run: npm ci
       - run: npm run lint
-      - run: npm run lint:sqlite
-      - run: npm run test:sqlite
       - run: npm run build
       - run: npm run test:package-consumer
       - run: npm run test:offline-types:nonstrict

@@ -29,6 +29,7 @@
     "prestart": "npm run prebuild",
     "release": "np --no-tests --no-publish",
     "lint": "ng lint",
+    "postlint": "npm run lint:sqlite && npm run test:sqlite",
     "lint:sqlite": "eslint vitest.sqlite.config.ts \"tests/**/*.ts\"",
     "test:watch": "ng test",
     "test:actions": "node --test .github/actions/classify-mobile-release/classify-mobile-release.spec.mjs && vitest run --config .github/actions/vitest.config.mjs",
