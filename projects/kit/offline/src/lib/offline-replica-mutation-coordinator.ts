@@ -42,7 +42,7 @@ export class OfflineReplicaMutationCoordinator {
   run<T>(operation: (repository: OfflineRepository) => Promise<T>): Promise<T> {
     return this.#enqueue(() => {
       if (!this.#repository) throw new Error('Offline repository is not configured.');
-      const atomicMutation = this.#repository?.[OFFLINE_REPOSITORY_ATOMIC_MUTATION];
+      const atomicMutation = this.#repository[OFFLINE_REPOSITORY_ATOMIC_MUTATION];
       return atomicMutation ? (atomicMutation.call(this.#repository, operation) as Promise<T>) : operation(this.#repository);
     });
   }

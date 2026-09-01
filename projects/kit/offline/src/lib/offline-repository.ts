@@ -258,11 +258,13 @@ export interface OfflineRepository {
   getCommands(scope: OfflineScope): Promise<OfflineCommand[]>;
   getCommandsForUser?(userId: OfflinePrincipalId): Promise<OfflineCommand[]>;
   putCommand(command: OfflineCommand): Promise<void>;
+  /** @deprecated Use {@link transactReplica} with `putCommands`. */
   replaceCommand(command: OfflineCommand): Promise<void>;
+  /** @deprecated Use {@link transactReplica} with `removeCommandIds`. */
   removeCommand(commandId: string): Promise<void>;
-  /** Upserts a durable fatal-pull attention for user+scope. */
+  /** @deprecated Use {@link transactReplica} with `putPullAttentions`. */
   putPullAttention?(attention: OfflinePullAttention): Promise<void>;
-  /** Removes a durable fatal-pull attention for user+scope when present. */
+  /** @deprecated Use {@link transactReplica} with `removePullAttentions`. */
   removePullAttention?(scope: OfflineScope): Promise<void>;
   clearUser(userId: OfflinePrincipalId): Promise<void>;
   clearScope(scope: OfflineScope): Promise<void>;
@@ -592,32 +594,24 @@ export class IonicOfflineRepository implements OfflineRepository {
     });
   }
 
+  /** @deprecated Use {@link transactReplica} with `putCommands`. */
   replaceCommand(command: OfflineCommand): Promise<void> {
     return this.putCommand(command);
   }
 
-  async removeCommand(commandId: string): Promise<void> {
-    await this.initialize();
-    await this.#mutateRecord<OfflineCommand>(OUTBOX_KEY, (commands) => {
-      delete commands[commandId];
-      return commands;
-    });
+  /** @deprecated Use {@link transactReplica} with `removeCommandIds`. */
+  removeCommand(commandId: string): Promise<void> {
+    return this.transactReplica({ removeCommandIds: [commandId] });
   }
 
-  async putPullAttention(attention: OfflinePullAttention): Promise<void> {
-    await this.initialize();
-    await this.#mutateRecord<OfflinePullAttention>(PULL_ATTENTIONS_KEY, (attentions) => {
-      attentions[this.#cursorKey(attention)] = attention;
-      return attentions;
-    });
+  /** @deprecated Use {@link transactReplica} with `putPullAttentions`. */
+  putPullAttention(attention: OfflinePullAttention): Promise<void> {
+    return this.transactReplica({ putPullAttentions: [attention] });
   }
 
-  async removePullAttention(scope: OfflineScope): Promise<void> {
-    await this.initialize();
-    await this.#mutateRecord<OfflinePullAttention>(PULL_ATTENTIONS_KEY, (attentions) => {
-      delete attentions[this.#cursorKey(scope)];
-      return attentions;
-    });
+  /** @deprecated Use {@link transactReplica} with `removePullAttentions`. */
+  removePullAttention(scope: OfflineScope): Promise<void> {
+    return this.transactReplica({ removePullAttentions: [scope] });
   }
 
   async clearUser(userId: OfflinePrincipalId): Promise<void> {

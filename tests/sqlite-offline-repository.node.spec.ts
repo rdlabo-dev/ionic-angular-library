@@ -213,7 +213,7 @@ describe('SqliteOfflineRepository real SQLite contract', () => {
     await expect(repository.getCommandsForUser(8)).resolves.toEqual([otherUser]);
   });
 
-  it('replaces an Outbox state without retaining optional values, then removes it', async () => {
+  it('keeps the deprecated Outbox mutation aliases compatible', async () => {
     const repository = createRepository();
     await repository.initialize();
     const scope = { userId: 7 as const, scopeId: 'demo' };
@@ -251,6 +251,17 @@ describe('SqliteOfflineRepository real SQLite contract', () => {
     ]);
     await repository.removeCommand(command.commandId);
     await expect(repository.getCommands(scope)).resolves.toEqual([]);
+  });
+
+  it('keeps the deprecated pull-attention mutation aliases compatible', async () => {
+    const repository = createRepository();
+    await repository.initialize();
+    const attention = { userId: 7 as const, scopeId: 'demo', reason: 'schema_upgrade_required' as const };
+
+    await repository.putPullAttention(attention);
+    await expect(repository.getPullAttentions(7)).resolves.toEqual([attention]);
+    await repository.removePullAttention({ userId: 7, scopeId: 'demo' });
+    await expect(repository.getPullAttentions(7)).resolves.toEqual([]);
   });
 
   it('atomically rolls back an Outbox enqueue when a later real SQLite write fails', async () => {
