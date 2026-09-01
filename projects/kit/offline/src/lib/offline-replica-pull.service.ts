@@ -308,7 +308,6 @@ export class OfflineReplicaPullService {
         { putRows: projection?.putRows ?? [], removeRows: projection?.removeRows ?? [] },
       ]);
       const rematerialized = await this.#rematerializePendingAggregates(
-        scope,
         userCommands,
         scopeCommands,
         confirmedAndProjected,
@@ -488,7 +487,6 @@ export class OfflineReplicaPullService {
   }
 
   async #rematerializePendingAggregates(
-    scope: OfflineScope,
     userCommands: readonly OfflineCommand[],
     scopeCommands: readonly OfflineCommand[],
     currentRows: { putRows: readonly OfflineReplicaRow[]; removeRows: readonly OfflineReplicaRowKey[] },
@@ -558,7 +556,6 @@ export class OfflineReplicaPullService {
       putRows.push(...(mutations.putRows ?? []));
       removeRows.push(...(mutations.removeRows ?? []));
     }
-    void scope;
     return { putRows, removeRows };
   }
 

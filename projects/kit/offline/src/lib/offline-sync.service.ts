@@ -562,11 +562,11 @@ export class OfflineSyncService {
     const scope = { userId, scopeId: request.scopeId };
     this.noteScope(scope);
     const commandIdentity = offlineCommandLookupIdentity(request.identity);
-    const normalized = await this.#normalizeEnqueueRequest(scope, request, commandIdentity, repository);
     const commandId = request.commandId ?? crypto.randomUUID();
     if (typeof commandId !== 'string' || commandId.length === 0 || commandId.length > 255) {
       throw new Error('Offline command id must contain between 1 and 255 characters.');
     }
+    assertOfflinePayload(request.payload);
     const sourceKey = this.#hooks.entityType(request);
     const localOnlyFootprint = this.#normalizedLocalOnlyFootprint(scope, request.localOnlyFootprint);
     if (replaced) this.#assertReplacementFootprint(replaced, localOnlyFootprint);
@@ -577,9 +577,9 @@ export class OfflineSyncService {
       sourceKey,
       identity: commandIdentity,
       operation: request.operation,
-      payload: normalized.payload,
+      payload: request.payload,
       replicaMutation: request.replicaMutation ?? 'upsert',
-      baseRevision: normalized.baseRevision,
+      baseRevision: request.baseRevision ?? null,
       state: 'pending',
       attempts: 0,
       retryAt: null,
@@ -597,21 +597,23 @@ export class OfflineSyncService {
     ) {
       throw new Error('Offline replacement command must address the same aggregate and replica identity.');
     }
-    const entityType = command.sourceKey;
-    const schema = this.#entitySchema(entityType);
+    const schema = this.#entitySchema(sourceKey);
     if (schema.identity.kind === 'localOnly') {
-      throw new Error(`Offline replica source "${entityType}" is local-only and cannot be added to the Outbox.`);
+      throw new Error(`Offline replica source "${sourceKey}" is local-only and cannot be added to the Outbox.`);
     }
     if (schema.identity.kind === 'generated' && request.identity.kind !== 'generated') {
-      throw new Error(`Offline replica source "${entityType}" requires generated identity.`);
+      throw new Error(`Offline replica source "${sourceKey}" requires generated identity.`);
     }
     if (schema.identity.kind === 'naturalKey' && request.identity.kind !== 'natural') {
-      throw new Error(`Offline replica source "${entityType}" requires natural identity.`);
+      throw new Error(`Offline replica source "${sourceKey}" requires natural identity.`);
     }
     if (request.replicaMutation === 'delete' && !repository.getReplicaRowIncludingPendingDelete) {
       throw new Error('Offline repository does not support durable replica delete tombstones.');
     }
-    const existing = await this.#getReplicaRowForSync(scope, entityType, commandIdentity, repository);
+    const existing = await this.#getReplicaRowForSync(scope, sourceKey, commandIdentity, repository);
+    if (existing?.serverRevision != null && existing.serverRevision !== command.baseRevision) {
+      command = { ...command, baseRevision: existing.serverRevision };
+    }
     const generatedIdentity = request.identity.kind === 'generated' ? request.identity : null;
     const initialRemoteId = this.#initialRemoteId(
       schema,
@@ -635,7 +637,7 @@ export class OfflineSyncService {
       canonicalOfflineRemoteIdentity(schema, { naturalKey: request.identity.naturalKey }) !==
         canonicalOfflineRemoteIdentity(schema, { naturalKey: naturalKey! })
     ) {
-      throw new Error(`Offline command naturalKey must match replica identity for "${entityType}".`);
+      throw new Error(`Offline command naturalKey must match replica identity for "${sourceKey}".`);
     }
     const remoteIdentity =
       schema.identity.kind === 'generated'
@@ -654,11 +656,11 @@ export class OfflineSyncService {
             existing.identity.kind === 'natural' ? existing.identity.naturalKey : offlineNaturalKeyFromValues(schema, existing.values)!,
         }) !== canonicalValuesKey
       ) {
-        throw new Error(`Offline replica naturalKey is immutable and must match command identity for "${entityType}".`);
+        throw new Error(`Offline replica naturalKey is immutable and must match command identity for "${sourceKey}".`);
       }
     }
     if (remoteIdentity !== null) {
-      const mapped = await repository.getReplicaRowByRemoteIdentity(scope, entityType, remoteIdentity);
+      const mapped = await repository.getReplicaRowByRemoteIdentity(scope, sourceKey, remoteIdentity);
       if (mapped !== null && !commandIdentityMatchesReplicaRow(schema, mapped, commandIdentity)) {
         if ('remoteId' in remoteIdentity) {
           throw new Error(`Offline replica remote id ${String(remoteIdentity.remoteId)} is already mapped to another row.`);
@@ -666,7 +668,6 @@ export class OfflineSyncService {
         throw new Error(`Offline replica remote identity is already mapped to another row.`);
       }
     }
-    this.#canonicalJson(normalized.payload);
     const seedBaseRow = existing
       ? undefined
       : request.identity.kind === 'generated'
@@ -1484,21 +1485,6 @@ export class OfflineSyncService {
     return true;
   }
 
-  async #normalizeEnqueueRequest<T>(
-    scope: OfflineScope,
-    request: EnqueueOfflineCommand<T>,
-    commandIdentity: OfflineCommandIdentity,
-    repository: OfflineRepository,
-  ): Promise<{ payload: T; baseRevision: string | number | null }> {
-    let baseRevision = request.baseRevision ?? null;
-    const sourceKey = this.#hooks.entityType(request);
-    const row = await this.#getReplicaRowForSync(scope, sourceKey, commandIdentity, repository);
-    if (row?.serverRevision != null && row.serverRevision !== baseRevision) {
-      baseRevision = row.serverRevision;
-    }
-    return { payload: request.payload, baseRevision };
-  }
-
   async #completeCommand(
     commands: OfflineCommand[],
     command: OfflineCommand,
@@ -2102,30 +2088,27 @@ export class OfflineSyncService {
     await Promise.allSettled([...this.#sendingTransitions, ...this.#commandSendTransitions.values()]);
   }
 
-  #canonicalJson(value: unknown): string {
-    if (Array.isArray(value)) return `[${value.map((item) => this.#canonicalJson(item)).join(',')}]`;
-    if (value !== null && typeof value === 'object') {
-      if (Object.getPrototypeOf(value) !== Object.prototype) {
-        throw new OfflinePayloadValidationError();
-      }
-      return `{${Object.entries(value)
-        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-        .map(([key, item]) => `${JSON.stringify(key)}:${this.#canonicalJson(item)}`)
-        .join(',')}}`;
-    }
-    if (typeof value === 'number' && !Number.isFinite(value)) {
-      throw new OfflinePayloadValidationError();
-    }
-    const serialized = JSON.stringify(value);
-    if (typeof serialized !== 'string') {
-      throw new OfflinePayloadValidationError();
-    }
-    return serialized;
-  }
-
   #scopeKey(scope: OfflineScope): string {
     return `${canonicalOfflinePrincipalId(scope.userId)}:${scope.scopeId}`;
   }
+}
+
+function assertOfflinePayload(value: unknown, ancestors = new Set<object>()): void {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) return;
+    throw new OfflinePayloadValidationError();
+  }
+  if (typeof value !== 'object' || ancestors.has(value)) {
+    throw new OfflinePayloadValidationError();
+  }
+  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new OfflinePayloadValidationError();
+  }
+  ancestors.add(value);
+  const items = Array.isArray(value) ? value : Object.values(value);
+  for (const item of items) assertOfflinePayload(item, ancestors);
+  ancestors.delete(value);
 }
 
 function compareOfflineCommands(left: OfflineCommand, right: OfflineCommand): number {

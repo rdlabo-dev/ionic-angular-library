@@ -1528,7 +1528,7 @@ describe('OfflineReplicaPullService', () => {
 
       await expect(service.pull(scope)).rejects.toThrow('Replica remote id is immutable: current=42, incoming=43.');
       await expect(
-        repository.getReplicaRowIncludingPendingDelete?.(scope, 'test_items', generatedCommandIdentity('019d-server-id-immutable')),
+        repository.getReplicaRowIncludingPendingDelete!(scope, 'test_items', generatedCommandIdentity('019d-server-id-immutable')),
       ).resolves.toMatchObject({
         identity: { kind: 'generated', localId: '019d-server-id-immutable', remoteId: 42 },
         visibility: 'pending_delete',
