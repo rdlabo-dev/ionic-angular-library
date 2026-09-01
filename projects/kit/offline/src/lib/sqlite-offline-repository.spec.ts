@@ -1006,7 +1006,7 @@ describe('SqliteOfflineRepository community sqlite driver', () => {
     ).resolves.toEqual([]);
   });
 
-  it('pull attentionをput/getしtransactionでupsertする', async () => {
+  it('pull attentionをtransactionでput/get/upsertする', async () => {
     const repository = createRepository();
     await repository.initialize();
     expect(plugin.execute).toHaveBeenCalledWith(
@@ -1014,10 +1014,8 @@ describe('SqliteOfflineRepository community sqlite driver', () => {
         statement: expect.stringContaining('CREATE TABLE IF NOT EXISTS offline_pull_attentions'),
       }),
     );
-    await repository.putPullAttention!({
-      userId: 1,
-      scopeId: '10',
-      reason: 'schema_upgrade_required',
+    await repository.transactReplica({
+      putPullAttentions: [{ userId: 1, scopeId: '10', reason: 'schema_upgrade_required' }],
     });
     expect(plugin.execute).toHaveBeenCalledWith(
       expect.objectContaining({

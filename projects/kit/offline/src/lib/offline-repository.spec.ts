@@ -810,7 +810,7 @@ describe('IonicOfflineRepository', () => {
     });
   });
 
-  it('同一createdAtはcommandId昇順で決定的に並べる', async () => {
+  it('同一createdAtを決定的に並べ、deprecated command aliasの互換性を保つ', async () => {
     const base: Omit<OfflineCommand, 'scopeId' | 'commandId' | 'createdAt'> = {
       userId: 1,
       aggregateType: 'test_items',
@@ -829,6 +829,12 @@ describe('IonicOfflineRepository', () => {
     await repository.putCommand({ ...base, scopeId: '11', commandId: 'cmd-m', createdAt: 10 });
     expect((await repository.getCommands({ userId: 1, scopeId: '10' })).map((item) => item.commandId)).toEqual(['cmd-a', 'cmd-z']);
     expect((await repository.getCommandsForUser!(1)).map((item) => item.commandId)).toEqual(['cmd-a', 'cmd-m', 'cmd-z']);
+    await repository.replaceCommand({ ...base, scopeId: '10', commandId: 'cmd-z', createdAt: 10, payload: { updated: true } });
+    expect(await repository.getCommands({ userId: 1, scopeId: '10' })).toContainEqual(
+      expect.objectContaining({ commandId: 'cmd-z', payload: { updated: true } }),
+    );
+    await repository.removeCommand('cmd-z');
+    expect((await repository.getCommands({ userId: 1, scopeId: '10' })).map((item) => item.commandId)).toEqual(['cmd-a']);
   });
 
   it('legacy web outboxの送信中と複数回試行済みの最終失敗をcommit不明として安全側へnormalizeする', async () => {
@@ -1460,7 +1466,7 @@ describe('IonicOfflineRepository', () => {
   });
 
   describe('pull attentions', () => {
-    it('put/get/removeとtransactionでuser+scope attentionを永続化する', async () => {
+    it('deprecated aliasとtransactionでuser+scope attentionをput/get/removeする', async () => {
       await repository.putPullAttention!({
         userId: 1,
         scopeId: '10',

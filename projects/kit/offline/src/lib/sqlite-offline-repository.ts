@@ -510,32 +510,24 @@ export class SqliteOfflineRepository implements OfflineRepository {
     await this.#queueWrite((databaseId) => this.#putCommand(databaseId, command));
   }
 
+  /** @deprecated Use {@link transactReplica} with `putCommands`. */
   replaceCommand(command: OfflineCommand): Promise<void> {
     return this.putCommand(command);
   }
 
-  async removeCommand(commandId: string): Promise<void> {
-    await this.#write('DELETE FROM offline_sync_commands WHERE command_id = ?', [commandId]);
+  /** @deprecated Use {@link transactReplica} with `removeCommandIds`. */
+  removeCommand(commandId: string): Promise<void> {
+    return this.transactReplica({ removeCommandIds: [commandId] });
   }
 
-  async putPullAttention(attention: OfflinePullAttention): Promise<void> {
-    await this.#write(
-      `INSERT INTO offline_pull_attentions (user_id, scope_id, reason, status) VALUES (?, ?, ?, ?)
-       ON CONFLICT(user_id, scope_id) DO UPDATE SET reason = excluded.reason, status = excluded.status`,
-      [
-        canonicalOfflinePrincipalId(attention.userId),
-        attention.scopeId,
-        attention.reason,
-        attention.status === undefined ? null : attention.status,
-      ],
-    );
+  /** @deprecated Use {@link transactReplica} with `putPullAttentions`. */
+  putPullAttention(attention: OfflinePullAttention): Promise<void> {
+    return this.transactReplica({ putPullAttentions: [attention] });
   }
 
-  async removePullAttention(scope: OfflineScope): Promise<void> {
-    await this.#write('DELETE FROM offline_pull_attentions WHERE user_id = ? AND scope_id = ?', [
-      canonicalOfflinePrincipalId(scope.userId),
-      scope.scopeId,
-    ]);
+  /** @deprecated Use {@link transactReplica} with `removePullAttentions`. */
+  removePullAttention(scope: OfflineScope): Promise<void> {
+    return this.transactReplica({ removePullAttentions: [scope] });
   }
 
   async clearUser(userId: OfflinePrincipalId): Promise<void> {

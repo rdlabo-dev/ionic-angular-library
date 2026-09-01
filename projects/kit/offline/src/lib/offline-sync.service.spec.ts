@@ -203,14 +203,6 @@ describe('OfflineSyncService', () => {
         return commands.filter((item) => item.userId === userId);
       }),
       putCommand,
-      replaceCommand: vi.fn(async (command: OfflineCommand) => {
-        commands = commands.filter((item) => item.commandId !== command.commandId);
-        commands.push(structuredClone(command));
-        commands.sort((left, right) => left.createdAt - right.createdAt);
-      }),
-      removeCommand: vi.fn(async (commandId: string) => {
-        commands = commands.filter((item) => item.commandId !== commandId);
-      }),
       getReplicaRow: vi.fn(async (scope: OfflineScope, sourceKey: string, identity: OfflineReplicaAddress) => {
         await beforeGetReplicaRow?.();
         return (
@@ -279,15 +271,6 @@ describe('OfflineSyncService', () => {
       getPullAttentions: vi.fn(async (userId: number) =>
         pullAttentions.filter((attention) => attention.userId === userId).map((attention) => structuredClone(attention)),
       ),
-      putPullAttention: vi.fn(async (attention: OfflinePullAttention) => {
-        pullAttentions = pullAttentions.filter(
-          (candidate) => candidate.userId !== attention.userId || candidate.scopeId !== attention.scopeId,
-        );
-        pullAttentions.push(structuredClone(attention));
-      }),
-      removePullAttention: vi.fn(async (scope: OfflineScope) => {
-        pullAttentions = pullAttentions.filter((candidate) => candidate.userId !== scope.userId || candidate.scopeId !== scope.scopeId);
-      }),
       clearUser: vi.fn(async (userId: number) => {
         commands = commands.filter((item) => item.userId !== userId);
         rows = rows.filter((item) => item.userId !== userId);
@@ -1656,8 +1639,6 @@ describe('OfflineSyncService', () => {
       getCommands: vi.fn(async () => []),
       getCommandsForUser: vi.fn(async () => []),
       putCommand: vi.fn(),
-      replaceCommand: vi.fn(),
-      removeCommand: vi.fn(),
       getReplicaRow: vi.fn(async () => null),
       getReplicaRowIncludingPendingDelete: vi.fn(async () => null),
       getReplicaRowByRemoteId: vi.fn(async () => null),
@@ -3856,7 +3837,21 @@ describe('OfflineSyncService', () => {
     expect(JSON.stringify(service.pendingCommands()[1]?.payload)).toBe(JSON.stringify(second));
   });
 
-  it('JSON外payloadをrejectする', async () => {
+  it.each([
+    ['undefined', () => ({ value: undefined })],
+    ['NaN', () => ({ value: Number.NaN })],
+    ['Infinity', () => ({ value: Number.POSITIVE_INFINITY })],
+    [
+      '循環参照',
+      () => {
+        const value: Record<string, unknown> = {};
+        value['self'] = value;
+        return value;
+      },
+    ],
+    ['非plain object', () => ({ value: new Date(0) })],
+    ['array hole', () => ({ value: Array(1) })],
+  ])('JSON外payload（%s）をrejectする', async (_case, payload) => {
     await expect(
       service.enqueue(
         {
@@ -3864,11 +3859,27 @@ describe('OfflineSyncService', () => {
           aggregateType: 'documents',
           identity: { kind: 'generated', localId: '1' },
           operation: 'documents.upsert',
-          payload: { value: undefined },
+          payload: payload(),
         },
         { flush: false },
       ),
     ).rejects.toBeInstanceOf(OfflinePayloadValidationError);
+  });
+
+  it('JSON payload内の共有参照は循環参照として扱わない', async () => {
+    const shared = { value: 'shared' };
+    await expect(
+      service.enqueue(
+        {
+          scopeId: '10',
+          aggregateType: 'documents',
+          identity: { kind: 'generated', localId: 'shared-reference' },
+          operation: 'documents.upsert',
+          payload: { left: shared, right: shared },
+        },
+        { flush: false },
+      ),
+    ).resolves.toEqual(expect.any(String));
   });
 
   it.each([
@@ -3972,13 +3983,6 @@ describe('OfflineSyncService', () => {
       putCommand: vi.fn(async (command: OfflineCommand) => {
         commands = commands.filter((item) => item.commandId !== command.commandId);
         commands.push(structuredClone(command));
-      }),
-      replaceCommand: vi.fn(async (command: OfflineCommand) => {
-        commands = commands.filter((item) => item.commandId !== command.commandId);
-        commands.push(structuredClone(command));
-      }),
-      removeCommand: vi.fn(async (commandId: string) => {
-        commands = commands.filter((item) => item.commandId !== commandId);
       }),
       getReplicaRow: vi.fn(async (scope: OfflineScope, sourceKey: string, identity: OfflineReplicaAddress) => {
         return (
@@ -5793,15 +5797,11 @@ describe('OfflineSyncService', () => {
           commands.push(structuredClone(command));
           commands.sort(compareCommands);
         }),
-        replaceCommand: vi.fn(async (command: OfflineCommand) => {
-          commands = commands.filter((item) => item.commandId !== command.commandId);
-          commands.push(structuredClone(command));
-          commands.sort(compareCommands);
-        }),
-        removeCommand: vi.fn(async (commandId: string) => {
-          commands = commands.filter((item) => item.commandId !== commandId);
-        }),
         getReplicaRow: vi.fn(async (scope: OfflineScope, sourceKey: string, identity: OfflineReplicaAddress) => {
+          const row = findReplicaRow(scope, sourceKey, identity);
+          return row ? projectReplicaRow(row, scope) : null;
+        }),
+        getReplicaRowIncludingPendingDelete: vi.fn(async (scope: OfflineScope, sourceKey: string, identity: OfflineReplicaAddress) => {
           const row = findReplicaRow(scope, sourceKey, identity);
           return row ? projectReplicaRow(row, scope) : null;
         }),
