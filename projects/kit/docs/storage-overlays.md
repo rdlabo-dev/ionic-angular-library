@@ -3,20 +3,34 @@
 Provide Ionic Storage once. `KitStorageService` initializes it lazily and every public operation waits for that initialization, so writes made immediately after service creation are not dropped.
 
 ```ts
-import { importProvidersFrom } from '@angular/core';
+import { importProvidersFrom, type ApplicationConfig } from '@angular/core';
 import { IonicStorageModule } from '@ionic/storage-angular';
 
 export const appConfig: ApplicationConfig = {
-  providers: [importProvidersFrom(IonicStorageModule.withConfig({ name: '__mydb' }))],
+  providers: [importProvidersFrom(IonicStorageModule.forRoot({ name: '__mydb' }))],
 };
 ```
 
 ```ts
-const storage = inject(KitStorageService);
+import { inject, Injectable } from '@angular/core';
+import { KitStorageService } from '@rdlabo/ionic-angular-kit';
 
-await storage.set('token', token);
-const saved = await storage.get<string>('token');
-await storage.remove('token');
+@Injectable({ providedIn: 'root' })
+export class TokenStore {
+  readonly #storage = inject(KitStorageService);
+
+  async save(token: string): Promise<void> {
+    await this.#storage.set('token', token);
+  }
+
+  get(): Promise<string | null> {
+    return this.#storage.get<string>('token');
+  }
+
+  remove(): Promise<void> {
+    return this.#storage.remove('token');
+  }
+}
 ```
 
 `get<T>()` returns `null` for a missing key. `kitClearStoragePreservingKeys()` clears application data while restoring selected values such as the last authentication email or theme.
@@ -40,10 +54,7 @@ export class DetailPage {
   readonly item = input.required<Item>();
 }
 
-export const launchDetailPage = (
-  overlay: KitOverlayController,
-  props: { item: Item },
-): Promise<DetailResult | undefined> =>
+export const launchDetailPage = (overlay: KitOverlayController, props: { item: Item }): Promise<DetailResult | undefined> =>
   overlay.presentModal(DetailPage, props, { backdropDismiss: false });
 ```
 

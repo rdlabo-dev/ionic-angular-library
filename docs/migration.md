@@ -10,16 +10,16 @@ Version 22 supports Angular 21 and 22. The kit, photo-editor, and scroll-header 
 
 Set `platform :ios, '16.4'` in the application Podfile and `IPHONEOS_DEPLOYMENT_TARGET = 16.4` in the Xcode project. This minimum is required because the obsolete auth autofill workaround is removed only after the corresponding WebKit fix shipped in the iOS 16.4 generation.
 
-While v22 is available under the npm `beta` dist-tag, install the prerelease with:
+Install the stable v22 packages with:
 
 ```bash
-npm install @rdlabo/ionic-angular-kit@beta \
-  @rdlabo/ionic-angular-photo-editor@beta \
-  @rdlabo/ionic-angular-scroll-header@beta \
-  @rdlabo/ngx-cdk-scroll-strategies@beta
+npm install @rdlabo/ionic-angular-kit@^22 \
+  @rdlabo/ionic-angular-photo-editor@^22 \
+  @rdlabo/ionic-angular-scroll-header@^22 \
+  @rdlabo/ngx-cdk-scroll-strategies@^22
 ```
 
-After stable v22 is published, use `@^22` instead of `@beta`. Omit packages that the application does not use. Release maintainers must update this prerelease instruction when promoting v22 to npm `latest`.
+Omit packages that the application does not use.
 
 ### @rdlabo/ionic-angular-photo-editor
 
@@ -126,6 +126,8 @@ Removed types and replacements:
 | `IFilterPreset`         | `PhotoFilterPreset` |
 | `ISize`                 | `PhotoSize`         |
 
+`PhotoFilter.option` and `PhotoFilterPreset.option` use the exported `PhotoFilterOptions` union instead of `any`. Update custom filter definitions so their option object matches the selected filter operation. Code that intentionally stores a supported option separately can annotate it with `PhotoFilterOptions`. Options outside this union cannot pass through `PhotoFilterPreset` or `PhotoImageEditor.applyFilter()`: keep editor-specific state inside a custom adapter (for example, resolve it by `type`) or move that filter's UI and integration outside the bundled preset API.
+
 #### PhotoFileService API
 
 ```typescript
@@ -211,11 +213,19 @@ Email persistence modes are unchanged:
 <ion-input type="email" autocomplete="email" kitAuthInput="email-remember" [formField]="form.email" />
 ```
 
-`kitAuthInput` is now required on every use (no default). Other kit public APIs are unchanged after satisfying the compatibility requirements above.
+`kitAuthInput` is now required on every use (no default). Other authentication APIs are unchanged after satisfying the compatibility requirements above.
+
+#### Offline API notes
+
+The v22 offline runtime keeps existing `network-first` and `local-first` read policies compatible and adds `fastest-first` and `local-only`. It also adds opt-in serialized response projection, caller-owned command IDs, and immediate transport for newly created generated identities. These APIs are additive; applications can adopt them per endpoint. See the [Offline and Realtime guide](../projects/kit/docs/offline-realtime.md) for their settlement and concurrency rules.
+
+Direct `OfflineRepository.replaceCommand()`, `removeCommand()`, `putPullAttention()`, and `removePullAttention()` calls are deprecated. Product-owned writes should use `OfflineSyncService.runSerializedReplicaMutation()` with one `repository.transactReplica()` transaction so reads, Outbox changes, replica rows, cursors, and pull attention remain under the same mutation owner. Existing deprecated calls remain available in v22, so this cleanup does not have to block the framework upgrade.
 
 ### @rdlabo/ionic-angular-scroll-header
 
-Version 22 has no package-specific API migration. Existing `rdlaboScrollHeader`, `rdlaboVirtualScrollHeader`, and `rdlaboFixVirtualScrollElement` usages remain valid after the dependency update.
+Existing `rdlaboScrollHeader`, `rdlaboVirtualScrollHeader`, and `rdlaboFixVirtualScrollElement` template usages remain valid after the dependency update.
+
+`ScrollHeaderDirective.ngOnInit()` and `VirtualScrollHeaderDirective.ngOnInit()` are no longer public methods in v22. Angular owns directive initialization, so application code should not call these lifecycle hooks directly. Remove direct calls and subclass overrides; tests should create the directive through an Angular fixture and trigger change detection instead.
 
 ### @rdlabo/ngx-cdk-scroll-strategies
 

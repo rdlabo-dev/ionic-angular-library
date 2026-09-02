@@ -8,15 +8,17 @@ npm install @rdlabo/ionic-angular-kit
 
 ## Requirements
 
-| Package                            | Supported version |
-| ---------------------------------- | ----------------- |
-| Angular                            | 21.x–22.x          |
-| Ionic Angular                      | 9.x                |
-| RxJS                               | 7.8.x             |
-| Capacitor core and feature plugins | 7.x–8.x            |
-| iOS/iPadOS deployment target       | 16.4 or later      |
+| Package                                         | Supported version |
+| ----------------------------------------------- | ----------------- |
+| Angular                                         | 21.x–22.x         |
+| Ionic Angular                                   | 9.x               |
+| RxJS                                            | 7.8.x             |
+| Capacitor Core, App, Haptics, Keyboard, Network | 7.x–8.x           |
+| iOS/iPadOS deployment target                    | 16.4 or later     |
 
-Install `@ionic/storage-angular` when using storage. Other peers are feature-scoped: install only the Capacitor, Firebase, printing, or Live Update packages used by your selected entry points.
+The core package declares `@ionic/storage-angular` and Capacitor Core, App, Haptics, Keyboard, and Network as required peers. Keep compatible versions installed even when an application uses only part of the core entry point. Native applications using `/offline` must additionally install and configure the `@capacitor-community/sqlite` major matching their Capacitor major; it is application-owned and is not installed by the kit.
+
+Firebase, social login, Live Update, Preferences, Status Bar, in-app review, and printer/PDF dependencies are optional feature peers. Install only the dependencies used by the selected secondary entry points and follow each plugin's own compatibility range; some optional plugins support only Capacitor 8.
 
 ## Entry points
 
@@ -36,7 +38,7 @@ Secondary entry points isolate optional native and SDK dependencies from the cor
 
 ## Configure only what you use
 
-Most features expose a provider whose callbacks keep routes, copy, credentials, and application side effects outside the kit. Start with [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays), then add authentication, offline, or native features as your app needs them.
+Most features expose a provider whose callbacks keep routes, copy, credentials, and application side effects outside the kit. Start with [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays), then add authentication, offline, or native features as your app needs them. The [Offline and Realtime](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/offline-realtime) guide includes the required SQLite connection, provider/interceptor order, read strategies, durable Outbox flow, and repository concurrency rules.
 
 ## Documentation
 
@@ -46,5 +48,7 @@ Most features expose a provider whose callbacks keep routes, copy, credentials, 
 - [Optional Features](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/optional-features)
 
 <!-- rdlabo-docs-omit -->
+
 **Full documentation:** [https://docs.rdlabo.dev/projects/ionic-angular-kit](https://docs.rdlabo.dev/projects/ionic-angular-kit)
+
 <!-- /rdlabo-docs-omit -->
