@@ -91,6 +91,7 @@ export type ProvideReadCacheOfflineOptions = ProvideOfflineOptionsBase &
     replicaPuller?: never;
   };
 
+/** Configuration accepted by the experimental offline runtime providers. */
 export type ProvideOfflineOptions = ProvideSynchronizedOfflineOptions | ProvideReadCacheOfflineOptions;
 
 const READ_CACHE_ONLY_COMMAND_EXECUTOR: OfflineCommandExecutor = {

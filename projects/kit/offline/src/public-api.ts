@@ -1,4 +1,13 @@
-/** Standard scoped local replica and outbox runtime for offline-capable Ionic applications. */
+/**
+ * Experimental scoped local replica and outbox runtime for offline-capable Ionic applications.
+ *
+ * This entry point is not covered by the package's SemVer compatibility guarantee. Its public
+ * APIs, persistence schema, and synchronization behavior may change incompatibly in a minor or
+ * patch release before stabilization.
+ *
+ * @packageDocumentation
+ * @experimental
+ */
 export * from './lib/offline-replica-schema';
 export * from './lib/offline-identity';
 export * from './lib/offline-aggregate-intent-projector';

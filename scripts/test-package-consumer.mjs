@@ -81,6 +81,16 @@ const bundlePhotoSurface = async (exportName, forbiddenPackages, requiredImports
 try {
   packageProjects.forEach(installPackedPackage);
 
+  const kitPackage = installedPackages.get('@rdlabo/ionic-angular-kit');
+  const offlineTypesPath = kitPackage.manifest.exports?.['./offline']?.types;
+  assert.equal(typeof offlineTypesPath, 'string', 'Kit is missing offline declaration export');
+  const offlineDeclaration = readFileSync(resolve(kitPackage.target, offlineTypesPath), 'utf8');
+  assert.match(
+    offlineDeclaration,
+    /@rdlabo\/ionic-angular-kit\/offline is experimental\.[\s\S]*@packageDocumentation[\s\S]*@experimental/,
+    'Packed offline declarations must retain the entry-point experimental banner',
+  );
+
   const photoManifest = installedPackages.get('@rdlabo/ionic-angular-photo-editor').manifest;
   for (const dependency of ['@angular/forms', 'ionicons', 'rxjs']) {
     assert.equal(typeof photoManifest.peerDependencies?.[dependency], 'string', `Missing runtime peer ${dependency}`);

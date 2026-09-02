@@ -215,7 +215,9 @@ Email persistence modes are unchanged:
 
 `kitAuthInput` is now required on every use (no default). Other authentication APIs are unchanged after satisfying the compatibility requirements above.
 
-#### Offline API notes
+#### Experimental offline API notes
+
+The `/offline` entry point, introduced in v21.4.1, remains experimental in v22 and is not covered by the kit's SemVer compatibility guarantee. Its public APIs, persistence schema, and synchronization behavior may change incompatibly in a minor or patch release before stabilization. Pin `@rdlabo/ionic-angular-kit` to an exact version when adopting it, and review this migration guide before every upgrade.
 
 The v22 offline runtime keeps existing `network-first` and `local-first` read policies compatible and adds `fastest-first` and `local-only`. It also adds opt-in serialized response projection, caller-owned command IDs, and immediate transport for newly created generated identities. These APIs are additive; applications can adopt them per endpoint. See the [Offline and Realtime guide](../projects/kit/docs/offline-realtime.md) for their settlement and concurrency rules.
 

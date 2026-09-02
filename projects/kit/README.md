@@ -22,19 +22,21 @@ Firebase, social login, Live Update, Preferences, Status Bar, in-app review, and
 
 ## Entry points
 
-| Import                                    | Responsibility                                                                 |
-| ----------------------------------------- | ------------------------------------------------------------------------------ |
-| `@rdlabo/ionic-angular-kit`               | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities |
-| `@rdlabo/ionic-angular-kit/offline`       | Scoped local replica, outbox, pull, replay, and request policies               |
-| `@rdlabo/ionic-angular-kit/theme`         | Persisted light/dark theme and native status bar sync                          |
-| `@rdlabo/ionic-angular-kit/forms`         | Ionic error text and state classes for Angular Signal Forms                    |
-| `@rdlabo/ionic-angular-kit/review`        | Throttled native in-app review requests                                        |
-| `@rdlabo/ionic-angular-kit/printer`       | DOM-to-PNG, Brother label, and PDF helpers                                     |
-| `@rdlabo/ionic-angular-kit/auth-firebase` | Firebase dependency wiring and authentication flows                            |
-| `@rdlabo/ionic-angular-kit/app-update`    | Atomic Angular service-worker update transitions                               |
-| `@rdlabo/ionic-angular-kit/live-update`   | Capawesome Live Update readiness provider                                      |
+| Import                                    | Responsibility                                                                     |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- |
+| `@rdlabo/ionic-angular-kit`               | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities     |
+| `@rdlabo/ionic-angular-kit/offline`       | **Experimental.** Scoped local replica, outbox, pull, replay, and request policies |
+| `@rdlabo/ionic-angular-kit/theme`         | Persisted light/dark theme and native status bar sync                              |
+| `@rdlabo/ionic-angular-kit/forms`         | Ionic error text and state classes for Angular Signal Forms                        |
+| `@rdlabo/ionic-angular-kit/review`        | Throttled native in-app review requests                                            |
+| `@rdlabo/ionic-angular-kit/printer`       | DOM-to-PNG, Brother label, and PDF helpers                                         |
+| `@rdlabo/ionic-angular-kit/auth-firebase` | Firebase dependency wiring and authentication flows                                |
+| `@rdlabo/ionic-angular-kit/app-update`    | Atomic Angular service-worker update transitions                                   |
+| `@rdlabo/ionic-angular-kit/live-update`   | Capawesome Live Update readiness provider                                          |
 
 Secondary entry points isolate optional native and SDK dependencies from the core bundle.
+
+The entire `/offline` entry point is experimental and is not covered by the kit's SemVer compatibility guarantee. Its public APIs, persistence schema, and synchronization behavior may change incompatibly in a minor or patch release before stabilization. Pin the kit to an exact version when adopting it, and review the migration guide before every upgrade.
 
 ## Configure only what you use
 

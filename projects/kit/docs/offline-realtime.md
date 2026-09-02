@@ -1,5 +1,7 @@
 ## Scoped offline runtime
 
+> **Experimental:** The entire `@rdlabo/ionic-angular-kit/offline` entry point is experimental and is not covered by the kit's SemVer compatibility guarantee. Its public APIs, persistence schema, and synchronization behavior may change incompatibly in a minor or patch release before stabilization. Pin the kit to an exact version when adopting it, and review the migration guide before every upgrade.
+
 The `/offline` entry point provides a user- and partition-scoped local replica, durable outbox, cursor-based delta pull, aggregate-ordered replay, optimistic mutation policies, and request-policy interception.
 
 Use `mode: 'readCacheOnly'` for external-source or HTTP caches. Synchronized mode uses encrypted `@capacitor-community/sqlite` on iOS and Android; it fails fast on the web because the current runtime has no cross-tab synchronization lock.
