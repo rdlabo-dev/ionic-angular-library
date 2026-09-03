@@ -1,20 +1,47 @@
 import { DOCUMENT } from '@angular/common';
 import type { EnvironmentProviders } from '@angular/core';
-import { Injectable, afterNextRender, inject, makeEnvironmentProviders, provideAppInitializer } from '@angular/core';
+import {
+  EnvironmentInjector,
+  Injectable,
+  afterNextRender,
+  inject,
+  makeEnvironmentProviders,
+  provideAppInitializer,
+  runInInjectionContext,
+} from '@angular/core';
 import { SwUpdate } from '@angular/service-worker';
 import type { UnrecoverableStateEvent, VersionEvent } from '@angular/service-worker';
 import { filter, take } from 'rxjs';
 
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
+const UPDATE_PROMPT_RETRY_MS = 1_000;
 const UNRECOVERABLE_RELOAD_KEY = 'kit_sw_unrecoverable_reload';
 
-/** Configuration for Angular service-worker application updates. */
+/** Asks whether a downloaded service-worker update should be applied now. `undefined` requests a later retry. */
+export type KitAppUpdatePrompt = () => Promise<boolean | undefined>;
+
+/** Existing configuration for startup-blocking or background service-worker updates. */
 export interface KitAppUpdateOptions {
-  /** `blocking` preserves startup safety; `background` never delays bootstrap and reloads only before interaction. */
   strategy?: 'blocking' | 'background';
 }
 
-/** Checks for a complete Angular service-worker update before users can interact with the application. */
+/** Uses a non-blocking update check and asks the user before reloading. */
+export interface KitConfirmAppUpdateOptions {
+  strategy: 'confirm';
+  /**
+   * Runs after the first render when a complete update is ready.
+   *
+   * Resolve `true` to reload, `false` when the user explicitly defers, or `undefined` when UI could not be presented and
+   * should be retried. The provider supplies an Angular injection context only for the callback's synchronous execution,
+   * so resolve injected dependencies before crossing an async boundary.
+   */
+  promptForUpdate: KitAppUpdatePrompt;
+}
+
+/** Configuration accepted by {@link provideKitAppUpdate}. */
+export type KitAppUpdateProviderOptions = (KitAppUpdateOptions & { promptForUpdate?: never }) | KitConfirmAppUpdateOptions;
+
+/** Coordinates complete Angular service-worker updates using blocking, background, or user-confirmed application. */
 @Injectable({ providedIn: 'root' })
 export class KitAppUpdateService {
   readonly #document = inject(DOCUMENT);
@@ -23,6 +50,11 @@ export class KitAppUpdateService {
   #backgroundStarted = false;
   #interactive = false;
   #reloading = false;
+  #updateReady = false;
+  #prompting = false;
+  #prompted = false;
+  #promptRetryScheduled = false;
+  #promptForUpdate: KitAppUpdatePrompt | undefined;
 
   /** Runs one startup update check and reloads directly into a downloaded version when one is available. */
   initialize(): Promise<void> {
@@ -44,16 +76,26 @@ export class KitAppUpdateService {
 
   /** Starts an update check that never blocks bootstrap or reloads after the application becomes interactive. */
   startBackground(): void {
+    this.#startNonBlocking();
+  }
+
+  /** Starts a non-blocking update check and asks after the first render before applying a ready update. */
+  startConfirm(promptForUpdate: KitAppUpdatePrompt): void {
+    this.#startNonBlocking(promptForUpdate);
+  }
+
+  #startNonBlocking(promptForUpdate?: KitAppUpdatePrompt): void {
     if (this.#backgroundStarted || !this.#canCheckForUpdate()) {
       return;
     }
     this.#backgroundStarted = true;
+    this.#promptForUpdate = promptForUpdate;
     this.#updates.versionUpdates
       .pipe(
         filter((event: VersionEvent) => event.type === 'VERSION_READY'),
         take(1),
       )
-      .subscribe(() => this.#reloadBeforeInteraction());
+      .subscribe(() => this.#handleUpdateReady());
     this.#updates.unrecoverable.pipe(take(1)).subscribe((event: UnrecoverableStateEvent) => {
       console.error('Angular service-worker state is unrecoverable', event.reason);
       this.#recoverBeforeInteraction(event.reason);
@@ -62,7 +104,7 @@ export class KitAppUpdateService {
       .checkForUpdate()
       .then((available) => {
         if (available) {
-          this.#reloadBeforeInteraction();
+          this.#handleUpdateReady();
         }
       })
       .catch((error: unknown) => console.error('Angular service-worker update check failed', error));
@@ -74,6 +116,7 @@ export class KitAppUpdateService {
     if (!this.#reloading) {
       this.#clearRecoveryBypass();
     }
+    this.#promptWhenReady();
   }
 
   #canCheckForUpdate(): boolean {
@@ -82,6 +125,65 @@ export class KitAppUpdateService {
 
   #reloadBeforeInteraction(): void {
     if (this.#interactive || this.#reloading) {
+      return;
+    }
+    this.#reloading = true;
+    this.#document.location?.reload();
+  }
+
+  #handleUpdateReady(): void {
+    if (!this.#promptForUpdate) {
+      this.#reloadBeforeInteraction();
+      return;
+    }
+    this.#updateReady = true;
+    this.#promptWhenReady();
+  }
+
+  #promptWhenReady(): void {
+    const promptForUpdate = this.#promptForUpdate;
+    if (
+      !this.#interactive ||
+      !this.#updateReady ||
+      !promptForUpdate ||
+      this.#prompting ||
+      this.#prompted ||
+      this.#promptRetryScheduled ||
+      this.#reloading
+    ) {
+      return;
+    }
+    this.#prompting = true;
+    void runUpdatePrompt(promptForUpdate)
+      .then((confirmed) => {
+        this.#prompting = false;
+        if (confirmed === undefined) {
+          this.#schedulePromptRetry();
+          return;
+        }
+        this.#prompted = true;
+        this.#applyPromptResult(confirmed);
+      })
+      .catch((error: unknown) => {
+        this.#prompting = false;
+        this.#prompted = true;
+        console.error('Angular service-worker update prompt failed', error);
+      });
+  }
+
+  #schedulePromptRetry(): void {
+    if (this.#promptRetryScheduled || this.#prompted || this.#reloading) {
+      return;
+    }
+    this.#promptRetryScheduled = true;
+    globalThis.setTimeout(() => {
+      this.#promptRetryScheduled = false;
+      this.#promptWhenReady();
+    }, UPDATE_PROMPT_RETRY_MS);
+  }
+
+  #applyPromptResult(confirmed: boolean): void {
+    if (!confirmed || this.#reloading) {
       return;
     }
     this.#reloading = true;
@@ -169,23 +271,47 @@ function clearFailure(storage: Storage | undefined): void {
 }
 
 /**
- * Provides a startup check that reloads into the latest complete web application version.
+ * Provides blocking, background, or user-confirmed adoption of complete Angular service-worker updates.
  *
  * @remarks
- * The check finishes before application bootstrap so a delayed update cannot discard user input. It times out rather
- * than preventing offline startup. API deployments must remain backward compatible while a newly adopted updater is
- * rolling out because code already running in older application versions cannot gain this behavior retroactively.
+ * The default `blocking` strategy checks before bootstrap and times out rather than preventing offline startup. The
+ * existing `background` strategy never delays bootstrap and reloads only before the first render. The opt-in `confirm`
+ * strategy also checks in the background, but waits until after the first render and reloads only with user approval.
+ * API deployments must remain backward compatible while an updater is rolling out because already-running older code
+ * cannot gain this behavior retroactively.
  */
-export function provideKitAppUpdate(options: KitAppUpdateOptions = {}): EnvironmentProviders {
-  const initializer =
-    options.strategy === 'background'
-      ? provideAppInitializer(() => {
-          const updates = inject(KitAppUpdateService);
-          updates.startBackground();
-          afterNextRender(() => updates.markInteractive());
-        })
-      : provideAppInitializer(() => inject(KitAppUpdateService).initialize());
-  return makeEnvironmentProviders([initializer]);
+export function provideKitAppUpdate(options: KitAppUpdateProviderOptions = {}): EnvironmentProviders {
+  if (options.strategy === 'confirm') {
+    const promptForUpdate = options.promptForUpdate;
+    if (typeof promptForUpdate !== 'function') {
+      throw new Error('provideKitAppUpdate confirm strategy requires promptForUpdate');
+    }
+    return makeEnvironmentProviders([
+      provideAppInitializer(() => {
+        const updates = inject(KitAppUpdateService);
+        const injector = inject(EnvironmentInjector);
+        updates.startConfirm(() => runInInjectionContext(injector, promptForUpdate));
+        afterNextRender(() => updates.markInteractive());
+      }),
+    ]);
+  }
+  if (options.promptForUpdate !== undefined) {
+    throw new Error('provideKitAppUpdate promptForUpdate is only valid with the confirm strategy');
+  }
+  if (options.strategy === 'background') {
+    return makeEnvironmentProviders([
+      provideAppInitializer(() => {
+        const updates = inject(KitAppUpdateService);
+        updates.startBackground();
+        afterNextRender(() => updates.markInteractive());
+      }),
+    ]);
+  }
+  return makeEnvironmentProviders([provideAppInitializer(() => inject(KitAppUpdateService).initialize())]);
+}
+
+async function runUpdatePrompt(promptForUpdate: KitAppUpdatePrompt): Promise<boolean | undefined> {
+  return promptForUpdate();
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
