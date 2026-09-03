@@ -24,9 +24,9 @@ provideKitAppUpdate({
   strategy: 'confirm',
   promptForUpdate: () =>
     inject(KitOverlayController).tryAlertConfirm({
-      header: 'An update is available',
-      message: 'Update now? The application will reload.',
-      okText: 'Update',
+      header: 'The latest version is ready',
+      message: 'Reload now to update?',
+      okText: 'Reload and update',
     }),
 });
 ```
