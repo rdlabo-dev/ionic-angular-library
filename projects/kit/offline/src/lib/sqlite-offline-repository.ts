@@ -45,6 +45,7 @@ import {
   type OfflineScope,
 } from './offline-repository';
 import {
+  isTransientSqliteLockError,
   normalizeOfflineReplicaTransientWriteError,
   OFFLINE_REPOSITORY_ATOMIC_MUTATION,
   OfflineReplicaTransientWriteError,
@@ -137,10 +138,6 @@ function sqliteErrorMessage(error: unknown): string {
   return String(error);
 }
 
-function isTransientCommunitySqliteOpenError(error: unknown): boolean {
-  return normalizeOfflineReplicaTransientWriteError(error) instanceof OfflineReplicaTransientWriteError;
-}
-
 async function openCommunitySqliteDatabase(database: CommunitySqliteDatabase): Promise<void> {
   for (const delayMs of COMMUNITY_SQLITE_OPEN_RETRY_DELAYS_MS) {
     const result = await database.open().then(
@@ -148,7 +145,7 @@ async function openCommunitySqliteDatabase(database: CommunitySqliteDatabase): P
       (error: unknown) => ({ ok: false, error }) as const,
     );
     if (result.ok) return;
-    if (!isTransientCommunitySqliteOpenError(result.error)) throw result.error;
+    if (!isTransientSqliteLockError(result.error)) throw result.error;
     await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
   }
   await database.open();
