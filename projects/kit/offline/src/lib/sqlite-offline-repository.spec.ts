@@ -562,6 +562,32 @@ describe('createCommunitySqliteDriver', () => {
     expect(connection.closeConnection).not.toHaveBeenCalled();
   });
 
+  it('retries a transient native database lock while setting the journal mode', async () => {
+    const database = createDatabase();
+    vi.mocked(database.open)
+      .mockRejectedValueOnce(new Error('Open: database is locked (code 5), while compiling: PRAGMA journal_mode'))
+      .mockResolvedValueOnce(undefined);
+    const connection: CommunitySqliteConnection = {
+      isSecretStored: vi.fn(async () => ({ result: true })),
+      setEncryptionSecret: vi.fn(async () => undefined),
+      createConnection: vi.fn(async () => database),
+      closeConnection: vi.fn(async () => undefined),
+    };
+    const timeout = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler: TimerHandler) => {
+      if (typeof handler === 'function') handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    await expect(createCommunitySqliteDriver(connection).open({ databaseName: 'product-offline' })).resolves.toEqual({
+      databaseId: 'product-offline',
+    });
+    timeout.mockRestore();
+
+    expect(database.open).toHaveBeenCalledTimes(2);
+    expect(connection.createConnection).toHaveBeenCalledOnce();
+    expect(connection.closeConnection).not.toHaveBeenCalled();
+  });
+
   it('recovers the connection orphaned when database open fails before a later retry', async () => {
     const failedDatabase = createDatabase();
     vi.mocked(failedDatabase.open).mockRejectedValueOnce(new Error('database open failed'));

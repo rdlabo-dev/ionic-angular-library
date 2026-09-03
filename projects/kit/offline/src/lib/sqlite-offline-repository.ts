@@ -120,6 +120,7 @@ export async function createRandomOfflineEncryptionKey(): Promise<string> {
 }
 
 const settledSqliteOperation = async (): Promise<void> => undefined;
+const COMMUNITY_SQLITE_OPEN_RETRY_DELAYS_MS = [50, 150, 300] as const;
 
 interface CachedCommunitySqliteDriver {
   driver: CommunitySqliteDriver;
@@ -134,6 +135,23 @@ function sqliteErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function isTransientCommunitySqliteOpenError(error: unknown): boolean {
+  return normalizeOfflineReplicaTransientWriteError(error) instanceof OfflineReplicaTransientWriteError;
+}
+
+async function openCommunitySqliteDatabase(database: CommunitySqliteDatabase): Promise<void> {
+  for (const delayMs of COMMUNITY_SQLITE_OPEN_RETRY_DELAYS_MS) {
+    const result = await database.open().then(
+      () => ({ ok: true }) as const,
+      (error: unknown) => ({ ok: false, error }) as const,
+    );
+    if (result.ok) return;
+    if (!isTransientCommunitySqliteOpenError(result.error)) throw result.error;
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
+  await database.open();
 }
 
 function normalizeCommunitySqliteDatabaseName(database: string): string {
@@ -236,7 +254,7 @@ export function createCommunitySqliteDriver(
     const opening = (async () => {
       await ensureSecret(createEncryptionKey);
       const value = await createReloadSafeCommunitySqliteDatabase(connection, databaseName, encrypted);
-      await value.open();
+      await openCommunitySqliteDatabase(value);
       databases.set(databaseKey, value);
       return value;
     })();
