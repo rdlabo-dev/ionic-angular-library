@@ -1,5 +1,5 @@
 import { DOCUMENT } from '@angular/common';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { inject, provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { SwUpdate } from '@angular/service-worker';
 import type { UnrecoverableStateEvent, VersionEvent } from '@angular/service-worker';
@@ -80,6 +80,20 @@ describe('provideKitAppUpdate', () => {
     expect(checkForUpdate).toHaveBeenCalledOnce();
   });
 
+  it('requires a prompt only when the confirm strategy is selected', () => {
+    // @ts-expect-error Runtime guard retained for untyped JavaScript consumers.
+    expect(() => provideKitAppUpdate({ strategy: 'confirm' })).toThrowError(
+      'provideKitAppUpdate confirm strategy requires promptForUpdate',
+    );
+    expect(() =>
+      provideKitAppUpdate({ strategy: 'background', promptForUpdate: async () => false } as unknown as Parameters<
+        typeof provideKitAppUpdate
+      >[0]),
+    ).toThrowError('provideKitAppUpdate promptForUpdate is only valid with the confirm strategy');
+    expect(() => provideKitAppUpdate({ strategy: 'background' })).not.toThrow();
+    expect(() => provideKitAppUpdate()).not.toThrow();
+  });
+
   it('background strategy does not block bootstrap while the update check is pending', () => {
     const { checkForUpdate, reload } = setupBackground(new Promise<boolean>(() => undefined));
 
@@ -102,6 +116,100 @@ describe('provideKitAppUpdate', () => {
     finishUpdate?.(true);
     await update;
 
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('waits until the first render before prompting for a ready update', async () => {
+    const promptForUpdate = vi.fn(async () => true);
+    const { service, reload, versionUpdates$ } = setupConfirm(new Promise<boolean>(() => undefined), { promptForUpdate });
+
+    versionUpdates$.next({
+      type: 'VERSION_READY',
+      currentVersion: { hash: 'current' },
+      latestVersion: { hash: 'latest' },
+    });
+
+    expect(promptForUpdate).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+
+    service.markInteractive();
+
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(promptForUpdate).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the current application running when the user defers an update', async () => {
+    const promptForUpdate = vi.fn(async () => false);
+    const { service, reload } = setupConfirm(true, { promptForUpdate });
+
+    service.markInteractive();
+
+    await vi.waitFor(() => expect(promptForUpdate).toHaveBeenCalledOnce());
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('retries when another UI prevents the update prompt from being presented', async () => {
+    vi.useFakeTimers();
+    const promptForUpdate = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(false);
+    const { service, reload } = setupConfirm(true, { promptForUpdate });
+
+    service.markInteractive();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(promptForUpdate).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(promptForUpdate).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(promptForUpdate).toHaveBeenCalledTimes(2);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('prompts only once when the version event and update check report the same update', async () => {
+    const promptForUpdate = vi.fn(async () => false);
+    const { service, versionUpdates$ } = setupConfirm(true, { promptForUpdate });
+    service.markInteractive();
+
+    versionUpdates$.next({
+      type: 'VERSION_READY',
+      currentVersion: { hash: 'current' },
+      latestVersion: { hash: 'latest' },
+    });
+
+    await vi.waitFor(() => expect(promptForUpdate).toHaveBeenCalledOnce());
+  });
+
+  it('runs the update prompt in the application injection context', async () => {
+    const promptForUpdate = vi.fn(async () => Boolean(inject(DOCUMENT)));
+    const { service, reload } = setupConfirm(true, { promptForUpdate });
+
+    service.markInteractive();
+
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+  });
+
+  it('keeps the current application running when the update prompt fails', async () => {
+    const error = new Error('overlay unavailable');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const promptForUpdate = vi.fn(async () => {
+      throw error;
+    });
+    const { service, reload } = setupConfirm(true, { promptForUpdate });
+
+    service.markInteractive();
+
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith('Angular service-worker update prompt failed', error));
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('does not check or prompt when Angular service workers are disabled', () => {
+    const promptForUpdate = vi.fn(async () => true);
+    const { service, checkForUpdate, reload } = setupConfirm(true, { isEnabled: false, promptForUpdate });
+
+    service.markInteractive();
+
+    expect(checkForUpdate).not.toHaveBeenCalled();
+    expect(promptForUpdate).not.toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
   });
 
@@ -196,14 +304,33 @@ function setup(result: boolean | Error | Promise<boolean>, isEnabled = true, isC
   return { service: TestBed.inject(KitAppUpdateService), checkForUpdate, reload };
 }
 
-interface BackgroundSetupOptions {
+interface NonBlockingSetupOptions {
   unrecoverable$?: Subject<UnrecoverableStateEvent>;
   stored?: Map<string, string>;
   storage?: { getItem(key: string): string | null; setItem(key: string, value: string): unknown; removeItem(key: string): unknown };
   href?: string;
+  isEnabled?: boolean;
+  isControlled?: boolean;
 }
 
-function setupBackground(result: boolean | Promise<boolean>, options: BackgroundSetupOptions = {}) {
+interface ConfirmSetupOptions extends NonBlockingSetupOptions {
+  promptForUpdate: () => Promise<boolean | undefined>;
+}
+
+function setupConfirm(result: boolean | Promise<boolean>, options: ConfirmSetupOptions) {
+  const { promptForUpdate, ...setupOptions } = options;
+  return setupNonBlocking(result, setupOptions, provideKitAppUpdate({ strategy: 'confirm', promptForUpdate }));
+}
+
+function setupBackground(result: boolean | Promise<boolean>, options: NonBlockingSetupOptions = {}) {
+  return setupNonBlocking(result, options, provideKitAppUpdate({ strategy: 'background' }));
+}
+
+function setupNonBlocking(
+  result: boolean | Promise<boolean>,
+  options: NonBlockingSetupOptions,
+  updateProvider: ReturnType<typeof provideKitAppUpdate>,
+) {
   TestBed.resetTestingModule();
   const unrecoverable$ = options.unrecoverable$ ?? new Subject<UnrecoverableStateEvent>();
   const stored = options.stored ?? new Map<string, string>();
@@ -220,16 +347,21 @@ function setupBackground(result: boolean | Promise<boolean>, options: Background
   TestBed.configureTestingModule({
     providers: [
       provideZonelessChangeDetection(),
-      provideKitAppUpdate({ strategy: 'background' }),
+      updateProvider,
       {
         provide: SwUpdate,
-        useValue: { isEnabled: true, checkForUpdate, versionUpdates: versionUpdates$, unrecoverable: unrecoverable$ },
+        useValue: {
+          isEnabled: options.isEnabled ?? true,
+          checkForUpdate,
+          versionUpdates: versionUpdates$,
+          unrecoverable: unrecoverable$,
+        },
       },
       {
         provide: DOCUMENT,
         useValue: {
           defaultView: {
-            navigator: { serviceWorker: { controller: {} } },
+            navigator: { serviceWorker: { controller: (options.isControlled ?? true) ? {} : null } },
             history: { state: historyState, replaceState },
             sessionStorage: options.storage ?? {
               getItem: (key: string) => stored.get(key) ?? null,

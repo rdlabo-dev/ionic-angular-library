@@ -11,10 +11,29 @@ Applications that prefetch every executable application chunk can opt into a non
 provideKitAppUpdate({ strategy: 'background' });
 ```
 
-The background strategy reloads only before Angular completes its first render. A later update is left for the next natural page
-load so user input is not discarded. It never calls `activateUpdate()`, which could mix a running shell with lazy chunks from
-another version. An unrecoverable startup generation is retried once with `ngsw-bypass`; the current history state and an
-offline-safe loop guard are retained.
+The existing background strategy reloads only before Angular completes its first render. A later update is left for the next
+natural page load so user input is not discarded.
+
+Applications can select the separate `confirm` strategy to offer an immediate, user-controlled update. The prompt runs after
+the first render and in an Angular injection context. Resolve dependencies synchronously before crossing an async boundary.
+Resolving `true` reloads into the complete downloaded version, `false` leaves it for the next natural page load, and `undefined`
+retries later because the prompt could not be presented (for example, while another alert is active).
+
+```ts
+provideKitAppUpdate({
+  strategy: 'confirm',
+  promptForUpdate: () =>
+    inject(KitOverlayController).tryAlertConfirm({
+      header: 'An update is available',
+      message: 'Update now? The application will reload.',
+      okText: 'Update',
+    }),
+});
+```
+
+Neither non-blocking strategy calls `activateUpdate()`, which could mix a running shell with lazy chunks from another version.
+An unrecoverable startup generation is retried once with `ngsw-bypass`; the current history state and an offline-safe loop guard
+are retained.
 
 ## Theme and review
 

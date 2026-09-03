@@ -390,6 +390,27 @@ export class KitOverlayController {
     if (this.#alertPresenting) {
       return false;
     }
+    return this.#presentAlertConfirm(options);
+  }
+
+  /**
+   * Try to present a confirmation alert without stacking it over another alert.
+   *
+   * @returns `true` for confirmation, `false` for explicit cancellation or backdrop dismissal, and `undefined` when
+   * another alert prevented this one from being presented.
+   */
+  async tryAlertConfirm(options: KitAlertConfirmOptions): Promise<boolean | undefined> {
+    if (this.#alertPresenting) {
+      return undefined;
+    }
+    const activeAlert = await this.#alertCtrl.getTop();
+    if (activeAlert || this.#alertPresenting) {
+      return undefined;
+    }
+    return this.#presentAlertConfirm(options);
+  }
+
+  async #presentAlertConfirm(options: KitAlertConfirmOptions): Promise<boolean> {
     this.#alertPresenting = true;
     const present = async (): Promise<boolean> => {
       const alert = await this.#alertCtrl.create({

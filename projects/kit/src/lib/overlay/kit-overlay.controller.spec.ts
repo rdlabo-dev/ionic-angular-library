@@ -53,16 +53,18 @@ function setup({
   popoverOverlay = fakeOverlay(),
   toastOverlay = fakeOverlay(),
   alertOverlay = fakeOverlay(),
+  activeAlert,
 }: {
   modalOverlay?: ReturnType<typeof fakeOverlay>;
   popoverOverlay?: ReturnType<typeof fakeOverlay>;
   toastOverlay?: ReturnType<typeof fakeOverlay>;
   alertOverlay?: ReturnType<typeof fakeOverlay>;
+  activeAlert?: ReturnType<typeof fakeOverlay>;
 } = {}) {
   const modalCtrl = { create: vi.fn().mockResolvedValue(modalOverlay) };
   const popoverCtrl = { create: vi.fn().mockResolvedValue(popoverOverlay) };
   const toastCtrl = { create: vi.fn().mockResolvedValue(toastOverlay) };
-  const alertCtrl = { create: vi.fn().mockResolvedValue(alertOverlay) };
+  const alertCtrl = { create: vi.fn().mockResolvedValue(alertOverlay), getTop: vi.fn().mockResolvedValue(activeAlert) };
 
   TestBed.configureTestingModule({
     providers: [
@@ -191,6 +193,30 @@ describe('KitOverlayController', () => {
       expect(alertCtrl.create).toHaveBeenCalledOnce();
       first.dismiss();
       await p;
+    });
+
+    it('reports when tryAlertConfirm could not present because another alert is active', async () => {
+      const first = deferredAlert();
+      const { controller, alertCtrl } = setup({ alertOverlay: first.overlay });
+      const p = controller.alertConfirm({ header: 'H', message: 'M', okText: 'OK' });
+
+      const blocked = await controller.tryAlertConfirm({ header: 'H2', message: 'M2', okText: 'OK' });
+
+      expect(blocked).toBeUndefined();
+      expect(alertCtrl.create).toHaveBeenCalledOnce();
+      first.dismiss();
+      await p;
+    });
+
+    it('reports an alert presented outside KitOverlayController instead of stacking over it', async () => {
+      const externalAlert = fakeOverlay();
+      const { controller, alertCtrl } = setup({ activeAlert: externalAlert });
+
+      const blocked = await controller.tryAlertConfirm({ header: 'H', message: 'M', okText: 'OK' });
+
+      expect(blocked).toBeUndefined();
+      expect(alertCtrl.getTop).toHaveBeenCalledOnce();
+      expect(alertCtrl.create).not.toHaveBeenCalled();
     });
 
     it('allows a new alert after the previous one dismisses', async () => {
