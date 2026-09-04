@@ -22,6 +22,7 @@ export class OfflineNetworkService {
   readonly #apiReachable = signal<boolean | null>(null);
   readonly #appActive = signal(true);
   readonly #lifecycleRevision = signal(0);
+  #apiReachabilityRevision = 0;
   #networkRevision = 0;
   readonly #listeners: PluginListenerHandle[] = [];
   #initialized = false;
@@ -67,10 +68,12 @@ export class OfflineNetworkService {
   }
 
   markApiSuccess(): void {
+    this.#apiReachabilityRevision += 1;
     this.#apiReachable.set(true);
   }
 
   markApiFailure(): void {
+    this.#apiReachabilityRevision += 1;
     this.#apiReachable.set(false);
   }
 
@@ -81,6 +84,7 @@ export class OfflineNetworkService {
   verifyConnection(url: string, timeoutMs = DEFAULT_OFFLINE_CONNECTION_VERIFICATION_TIMEOUT_MS): Promise<boolean> {
     if (this.#connectionVerification) return this.#connectionVerification;
 
+    const startingApiReachabilityRevision = this.#apiReachabilityRevision;
     this.#checkingConnection.set(true);
     const verification = firstValueFrom(
       this.#http
@@ -94,7 +98,12 @@ export class OfflineNetworkService {
             this.markApiSuccess();
             return true;
           }),
-          catchError(() => of(false)),
+          catchError((error: unknown) => {
+            if (isOfflineFallbackError(error) && this.#apiReachabilityRevision === startingApiReachabilityRevision) {
+              this.markApiFailure();
+            }
+            return of(false);
+          }),
         ),
     ).finally(() => {
       this.#checkingConnection.set(false);

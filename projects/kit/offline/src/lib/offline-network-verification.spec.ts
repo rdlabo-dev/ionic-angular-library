@@ -59,18 +59,28 @@ describe('OfflineNetworkService connection verification', () => {
     expect(service.checkingConnection()).toBe(false);
   });
 
-  it('leaves a newer successful observation intact after a status-zero failure and permits retry', async () => {
+  it('records a status-zero failure when no newer API observation exists and permits retry', async () => {
     const markApiFailure = vi.spyOn(service, 'markApiFailure');
     const first = service.verifyConnection('/status');
-    service.markApiSuccess();
     http.expectOne('/status').error(new ProgressEvent('error'));
     await expect(first).resolves.toBe(false);
-    expect(markApiFailure).not.toHaveBeenCalled();
-    expect(service.state()).toBe('unverified');
+    expect(markApiFailure).toHaveBeenCalledOnce();
+    expect(service.state()).toBe('offline');
 
     const second = service.verifyConnection('/status');
     http.expectOne('/status').flush({});
     await expect(second).resolves.toBe(true);
+  });
+
+  it('does not let an older probe failure overwrite a newer successful API observation', async () => {
+    const markApiFailure = vi.spyOn(service, 'markApiFailure');
+    const verification = service.verifyConnection('/status');
+    service.markApiSuccess();
+    http.expectOne('/status').error(new ProgressEvent('error'));
+
+    await expect(verification).resolves.toBe(false);
+    expect(markApiFailure).not.toHaveBeenCalled();
+    expect(service.state()).toBe('unverified');
   });
 
   it('does not overwrite reachability when a stalled check times out and permits retry', async () => {
