@@ -1,7 +1,12 @@
-import { computed, Injectable, signal } from '@angular/core';
+import { HttpClient, HttpContext } from '@angular/common/http';
+import { computed, inject, Injectable, signal } from '@angular/core';
 import { App } from '@capacitor/app';
 import type { PluginListenerHandle } from '@capacitor/core';
 import { Network } from '@capacitor/network';
+import { catchError, firstValueFrom, map, of, timeout } from 'rxjs';
+import { OFFLINE_BYPASS, OFFLINE_IGNORE_TRANSPORT_FAILURE } from './offline-request-policy';
+
+export const DEFAULT_OFFLINE_CONNECTION_VERIFICATION_TIMEOUT_MS = 8_000;
 
 export type OfflineNetworkState = 'online' | 'offline' | 'unverified';
 
@@ -17,9 +22,14 @@ export class OfflineNetworkService {
   readonly #apiReachable = signal<boolean | null>(null);
   readonly #appActive = signal(true);
   readonly #lifecycleRevision = signal(0);
+  #apiReachabilityRevision = 0;
   #networkRevision = 0;
   readonly #listeners: PluginListenerHandle[] = [];
   #initialized = false;
+  readonly #checkingConnection = signal(false);
+  #connectionVerification: Promise<boolean> | null = null;
+
+  readonly #http = inject(HttpClient);
 
   readonly state = computed<OfflineNetworkState>(() => {
     if (this.#osConnected() === false || this.#apiReachable() === false) return 'offline';
@@ -31,6 +41,8 @@ export class OfflineNetworkService {
   readonly appActive = this.#appActive.asReadonly();
   /** Changes on every foreground/background transition, even when connectivity is unchanged. */
   readonly lifecycleRevision = this.#lifecycleRevision.asReadonly();
+  /** Whether an explicit remote API reachability check is running. */
+  readonly checkingConnection = this.#checkingConnection.asReadonly();
 
   async initialize(): Promise<void> {
     if (this.#initialized) return;
@@ -56,11 +68,49 @@ export class OfflineNetworkService {
   }
 
   markApiSuccess(): void {
+    this.#apiReachabilityRevision += 1;
     this.#apiReachable.set(true);
   }
 
   markApiFailure(): void {
+    this.#apiReachabilityRevision += 1;
     this.#apiReachable.set(false);
+  }
+
+  /**
+   * Runs one remote-only reachability check for this service instance and updates the observed API state.
+   * While it is running, every caller shares that check; products should therefore use one stable health endpoint.
+   */
+  verifyConnection(url: string, timeoutMs = DEFAULT_OFFLINE_CONNECTION_VERIFICATION_TIMEOUT_MS): Promise<boolean> {
+    if (this.#connectionVerification) return this.#connectionVerification;
+
+    const startingApiReachabilityRevision = this.#apiReachabilityRevision;
+    this.#checkingConnection.set(true);
+    const verification = firstValueFrom(
+      this.#http
+        .get(url, {
+          context: new HttpContext().set(OFFLINE_BYPASS, true).set(OFFLINE_IGNORE_TRANSPORT_FAILURE, true),
+          observe: 'response',
+        })
+        .pipe(
+          timeout({ first: timeoutMs }),
+          map(() => {
+            this.markApiSuccess();
+            return true;
+          }),
+          catchError((error: unknown) => {
+            if (isOfflineFallbackError(error) && this.#apiReachabilityRevision === startingApiReachabilityRevision) {
+              this.markApiFailure();
+            }
+            return of(false);
+          }),
+        ),
+    ).finally(() => {
+      this.#checkingConnection.set(false);
+      this.#connectionVerification = null;
+    });
+    this.#connectionVerification = verification;
+    return verification;
   }
 
   /** Factory seam for Capacitor app-state discovery and deterministic tests. */

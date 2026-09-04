@@ -18,6 +18,7 @@ import { OFFLINE_REPOSITORY } from './offline-repository';
 import { offlineInterceptor } from './offline.interceptor';
 import {
   OFFLINE_BYPASS,
+  OFFLINE_IGNORE_TRANSPORT_FAILURE,
   OFFLINE_RESPONSE_HEADER,
   type OfflineMutationRequestPlan,
   OfflineMutationRequestPolicyRegistry,
@@ -62,6 +63,17 @@ describe('offlineInterceptor', () => {
     await expect(firstValueFrom(run(request, next))).resolves.toBe(response);
     expect(resolve).not.toHaveBeenCalled();
     expect(resolveMutation).not.toHaveBeenCalled();
+  });
+
+  it('manual probeのtransport失敗は新しいAPI成功状態を上書きしない', async () => {
+    const error = new HttpErrorResponse({ status: 0, error: new Error('offline') });
+    const request = new HttpRequest('GET', '/status', {
+      context: new HttpContext().set(OFFLINE_BYPASS, true).set(OFFLINE_IGNORE_TRANSPORT_FAILURE, true),
+    });
+
+    await expect(firstValueFrom(run(request, () => throwError(() => error)))).rejects.toBe(error);
+
+    expect(markApiFailure).not.toHaveBeenCalled();
   });
 
   it('GET成功はtransport responseをそのまま返しreachabilityを更新する', async () => {
