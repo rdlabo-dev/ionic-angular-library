@@ -2,6 +2,7 @@ import { computed, inject, Injectable, signal } from '@angular/core';
 import type { OfflinePrincipalId } from './offline-identity';
 import { OFFLINE_KIT_OPTIONS } from './offline-kit-options';
 import { OfflineNetworkService } from './offline-network.service';
+import { DEFAULT_OFFLINE_CONNECTION_VERIFICATION_TIMEOUT_MS } from './offline-network.service';
 import { OfflineMutationPersistenceService } from './offline-mutation-persistence.service';
 import { OFFLINE_REPOSITORY } from './offline-repository';
 import { OfflineSessionService } from './offline-session.service';
@@ -55,12 +56,18 @@ export class OfflineCoordinatorService {
   readonly isStorageReady = computed(() => this.#storageState().status === 'ready');
 
   readonly networkState = this.#network.state;
+  readonly checkingConnection = this.#network.checkingConnection;
   readonly syncState = this.#sync.syncState;
   readonly pendingCommands = this.#sync.pendingCommands;
   readonly pendingCount = this.#sync.pendingCount;
   readonly conflicts = this.#sync.conflicts;
   /** Device-local control for accepting new durable Outbox mutations. */
   readonly mutationPersistence = this.#mutationPersistence;
+
+  /** Immediately verifies remote API reachability without consulting the local replica. */
+  verifyConnection(url: string, timeoutMs = DEFAULT_OFFLINE_CONNECTION_VERIFICATION_TIMEOUT_MS): Promise<boolean> {
+    return this.#network.verifyConnection(url, timeoutMs);
+  }
 
   /** Opens local storage and restores its persisted session boundary without waiting for network discovery. */
   initializeLocal(): Promise<void> {
