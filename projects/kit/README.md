@@ -6,6 +6,8 @@
 npm install @rdlabo/ionic-angular-kit
 ```
 
+As you integrate Kit patterns, [check your Kit integration with ESLint](./docs/eslint.md).
+
 ## Requirements
 
 | Package                                         | Supported version |
