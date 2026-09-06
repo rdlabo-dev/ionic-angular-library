@@ -106,6 +106,7 @@ try {
   writeFileSync(
     join(temporaryDirectory, 'consumer.ts'),
     `import { type KitAuthInputMode } from '@rdlabo/ionic-angular-kit';
+import { provideKitAppUpdate, type KitAppUpdateOptions, type KitAppUpdateProviderOptions } from '@rdlabo/ionic-angular-kit/app-update';
 import { KitIonicFormField, provideKitIonicSignalForms } from '@rdlabo/ionic-angular-kit/forms';
 import { providePhotoEditor, type PhotoEditorProps, type PhotoEditorResult, type PhotoViewerProps, type PhotoViewerResult } from '@rdlabo/ionic-angular-photo-editor';
 import { PhotoEditorPage } from '@rdlabo/ionic-angular-photo-editor/editor';
@@ -122,8 +123,18 @@ const viewerProps: PhotoViewerProps = { imageUrls: [], toolbarColorScheme: 'ligh
 const editorResult: PhotoEditorResult = { action: 'save', value: editorProps.value };
 const viewerResult: PhotoViewerResult = { action: 'delete', index: 0, value: '' };
 const photoProviders = providePhotoEditor({ maxSize: 1000, labels: { camera: 'Camera' } });
-const symbols = [KitIonicFormField, provideKitIonicSignalForms, providePhotoEditor, PhotoEditorPage, createTuiImageEditor, PhotoFileService, loadCapacitorPhotoCamera, PhotoViewerPage, ScrollHeaderDirective, CdkDynamicSizeVirtualScroll];
-void [mode, viewerProps, editorResult, viewerResult, photoProviders, symbols, calculateItemCountForPixelDistance([{ itemSize: 10 }], 5)];
+const backgroundUpdate: KitAppUpdateOptions = { strategy: 'background' };
+interface ConsumerUpdateOptions extends KitAppUpdateOptions { consumerLabel?: string }
+class ConsumerUpdateClass implements KitAppUpdateOptions { readonly strategy = 'background' as const; }
+const extendedBackgroundUpdate: ConsumerUpdateOptions = { strategy: 'background', consumerLabel: 'consumer' };
+const confirmUpdate: KitAppUpdateProviderOptions = { strategy: 'confirm', promptForUpdate: async () => true };
+// @ts-expect-error confirm requires a prompt
+const invalidConfirmUpdate: KitAppUpdateProviderOptions = { strategy: 'confirm' };
+// @ts-expect-error only confirm accepts a prompt
+const invalidBackgroundUpdate: KitAppUpdateProviderOptions = { strategy: 'background', promptForUpdate: async () => false };
+const updateProviders = [provideKitAppUpdate(backgroundUpdate), provideKitAppUpdate(extendedBackgroundUpdate), provideKitAppUpdate(new ConsumerUpdateClass()), provideKitAppUpdate(confirmUpdate)];
+const symbols = [KitIonicFormField, provideKitIonicSignalForms, provideKitAppUpdate, providePhotoEditor, PhotoEditorPage, createTuiImageEditor, PhotoFileService, loadCapacitorPhotoCamera, PhotoViewerPage, ScrollHeaderDirective, CdkDynamicSizeVirtualScroll];
+void [mode, viewerProps, editorResult, viewerResult, photoProviders, invalidConfirmUpdate, invalidBackgroundUpdate, updateProviders, symbols, calculateItemCountForPixelDistance([{ itemSize: 10 }], 5)];
 `,
   );
   writeFileSync(
