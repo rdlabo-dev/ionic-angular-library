@@ -46,7 +46,7 @@ These rules are also included in `rdlabo.configs.recommended`.
 
 ## Keep modal creation in a launcher
 
-`deny-overlay-create` reports direct Ionic modal and popover controller creation. `prefer-modal-launcher` checks that `presentModal` calls live in `launch*` functions.
+`deny-overlay-create` reports `.create()` calls on `ModalController` and `PopoverController`. `prefer-modal-launcher` checks that `presentModal` calls live in `launch*` functions.
 
 With `overlay` and `DetailPage` from your [overlay setup](./storage-overlays.md), this is reported:
 
