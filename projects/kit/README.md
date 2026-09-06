@@ -1,12 +1,49 @@
 # @rdlabo/ionic-angular-kit
 
-`@rdlabo/ionic-angular-kit` provides shared application infrastructure for Ionic Angular applications. It keeps product-specific screens, domain policy, and translations in the consuming app.
+`@rdlabo/ionic-angular-kit` provides typed storage, typed overlays, and Ionic Signal Forms adapters for Ionic Angular applications. Product-specific screens, domain policy, and translations stay in the consuming app.
 
 ```sh
 npm install @rdlabo/ionic-angular-kit
 ```
 
-As you integrate Kit patterns, [check your Kit integration with ESLint](./docs/eslint.md).
+## First try: save a preference
+
+In an existing Ionic Angular application, merge the Ionic Storage provider into your existing app config. Do not replace other providers.
+
+```ts
+import { importProvidersFrom, type ApplicationConfig } from '@angular/core';
+import { IonicStorageModule } from '@ionic/storage-angular';
+
+export const appConfig: ApplicationConfig = {
+  providers: [importProvidersFrom(IonicStorageModule.forRoot({ name: '__mydb' }))],
+};
+```
+
+Then add this standalone component:
+
+```ts
+import { Component, inject, signal } from '@angular/core';
+import { IonButton } from '@ionic/angular';
+import { disableHandler, KitStorageService } from '@rdlabo/ionic-angular-kit';
+
+@Component({
+  selector: 'app-preferences-demo',
+  imports: [IonButton],
+  template: `<ion-button type="button" (click)="disableHandler($event, save())">Save preference</ion-button><p>{{ result() }}</p>`,
+})
+export class PreferencesDemo {
+  private readonly storage = inject(KitStorageService);
+  readonly result = signal('');
+  readonly disableHandler = disableHandler;
+
+  async save(): Promise<void> {
+    await this.storage.set('theme', 'dark');
+    this.result.set((await this.storage.get<string>('theme')) ?? '');
+  }
+}
+```
+
+Render `<app-preferences-demo>` on an existing page (import `PreferencesDemo` into that standalone page's `imports`). Click Save preference — `dark` appears. `KitStorageService` initializes storage automatically; no manual initialization is required.
 
 ## Requirements
 
@@ -42,11 +79,13 @@ The entire `/offline` entry point is experimental and is not covered by the kit'
 
 ## Configure only what you use
 
-Most features expose a provider whose callbacks keep routes, copy, credentials, and application side effects outside the kit. Start with [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays), then add authentication, offline, or native features as your app needs them. The [Offline and Realtime](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/offline-realtime) guide includes the required SQLite connection, provider/interceptor order, read strategies, durable Outbox flow, and repository concurrency rules.
+Most features expose a provider whose callbacks keep routes, copy, credentials, and application side effects outside the kit. Start with [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays) and [Forms](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/forms).
 
 ## Documentation
 
 - [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays)
+- [Forms](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/forms)
+- [Check your Kit integration with ESLint](./docs/eslint.md)
 - [Authentication and HTTP](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/auth-http)
 - [Offline and Realtime](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/offline-realtime)
 - [Optional Features](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/optional-features)
