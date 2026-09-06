@@ -157,8 +157,9 @@ import type { CanActivateFn, Routes } from '@angular/router';
 import { OfflineRouteInitializerService, provideRouteScopedOffline } from '@rdlabo/ionic-angular-kit/offline';
 
 const offlineReadyGuard: CanActivateFn = async () => {
+  const offlineRouteInitializer = inject(OfflineRouteInitializerService);
   await recoverProductOwnedLocalReset();
-  await inject(OfflineRouteInitializerService).initialize();
+  await offlineRouteInitializer.initialize();
   return true;
 };
 

@@ -2,27 +2,38 @@
 
 This entry point targets Angular 22 Signal Forms.
 
-Import Angular's `FormField` together with the kit adapter in each standalone component that binds Signal Forms to Ionic controls.
+Register the adapter once at bootstrap, then bind Signal Forms to Ionic controls with Angular's `FormField` and `KitIonicFormField`:
 
 ```ts
-import { FormField } from '@angular/forms/signals';
-import { KitIonicFormField } from '@rdlabo/ionic-angular-kit/forms';
+import { Component, signal } from '@angular/core';
+import type { ApplicationConfig } from '@angular/core';
+import { FormField, form, required, email, maxLength } from '@angular/forms/signals';
+import { IonInput } from '@ionic/angular';
+import { KitIonicFormField, provideKitIonicSignalForms } from '@rdlabo/ionic-angular-kit/forms';
+
+export const appConfig: ApplicationConfig = {
+  providers: [provideKitIonicSignalForms()],
+};
 
 @Component({
-  imports: [FormField, KitIonicFormField],
+  selector: 'app-profile',
+  imports: [FormField, KitIonicFormField, IonInput],
+  template: `
+    <ion-input label="Name" [formField]="profileForm.name"></ion-input>
+    <ion-input label="Email" type="email" [formField]="profileForm.email"></ion-input>
+  `,
 })
-export class ProfilePage {}
+export class ProfilePage {
+  readonly profile = signal({ name: '', email: '' });
+  readonly profileForm = form(this.profile, (path) => {
+    required(path.name);
+    email(path.email);
+    maxLength(path.name, 200);
+  });
+}
 ```
 
-The adapter copies the first non-empty explicit validation message to Ionic's `errorText` property for `ion-input`, `ion-textarea`, `ion-select`, `ion-checkbox`, `ion-radio-group`, and `ion-toggle`. When Angular's validator does not provide a message, the adapter derives a generic English message from the validation error `kind` and its constraint metadata. Built-in validators therefore need no message configuration:
-
-```ts
-readonly profileForm = form(this.profile, (path) => {
-  required(path.name);
-  email(path.email);
-  maxLength(path.name, 200);
-});
-```
+Leave a required field empty and blur it — Ionic shows `errorText`, and the control becomes invalid and touched. The adapter copies the first non-empty explicit validation message to `errorText` for `ion-input`, `ion-textarea`, `ion-select`, `ion-checkbox`, `ion-radio-group`, and `ion-toggle`. When Angular's validator does not provide a message, the adapter derives a generic English message from the validation error `kind` and its constraint metadata. Built-in validators therefore need no message configuration.
 
 Unknown custom error kinds fall back to `Enter a valid value.`. Keep business-rule failures outside field validation. An explicit validation message still takes precedence for compatibility, and an explicit `errorText` or `[errorText]` binding prevents the adapter from being instantiated.
 
@@ -34,21 +45,12 @@ import { KIT_SIGNAL_FORM_ERROR_MESSAGE_RESOLVER } from '@rdlabo/ionic-angular-ki
 
 export const appConfig: ApplicationConfig = {
   providers: [
+    provideKitIonicSignalForms(),
     {
       provide: KIT_SIGNAL_FORM_ERROR_MESSAGE_RESOLVER,
       useValue: (error: ValidationError) => localizedMessageFor(error),
     },
   ],
-};
-```
-
-Install the state-class configuration once at application bootstrap:
-
-```ts
-import { provideKitIonicSignalForms } from '@rdlabo/ionic-angular-kit/forms';
-
-export const appConfig: ApplicationConfig = {
-  providers: [provideKitIonicSignalForms()],
 };
 ```
 

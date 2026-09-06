@@ -1,5 +1,7 @@
 Hidden safe-area headers and always-visible native headers.
 
+Start from the scroll-aware header on [IonContent](./ion-content.md), then choose the header structure below for your layout.
+
 ## Why do I need to set hidden header for safe-area?
 
 Of course, it is also possible to set a safe-area in ion-content as follows.

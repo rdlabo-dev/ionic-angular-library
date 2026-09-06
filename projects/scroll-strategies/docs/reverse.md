@@ -1,9 +1,9 @@
 Call this after [Installation](../README.md#installation).
 
-> This demo combines variable item heights with reverse virtual scrolling for a chat UI like WeChat.
+> Reuse the data model, `dynamicSize` computed, `trackBy`, and viewport imports from [Simple Usage](./simple.md). This page adds reverse layout CSS and `[isReverse]="true"` for a chat-style list.
 
 - Demo: https://rdlabo-ionic-angular-library.netlify.app/main/scroll-strategies/reverse
-- Source: https://github.com/rdlabo-dev/ionic-angular-library/tree/v21.6.2/projects/demo/src/app/scroll-strategies/pages/scroll-reverse
+- Source: https://github.com/rdlabo-dev/ionic-angular-library/tree/v22.0.0/projects/demo/src/app/scroll-strategies/pages/scroll-reverse
 
 If reverse scroll, add `isReverse` directive to `cdk-virtual-scroll-viewport` tag.
 
@@ -31,7 +31,7 @@ Add css to `cdk-virtual-scroll-viewport.reverse-scroll` at global css file like 
 ```css
 cdk-virtual-scroll-viewport {
   width: 100%;
-  height: 100%;
+  height: 320px;
 
   /* .reverse-scroll class is added from this directive. */
   &.reverse-scroll {
@@ -60,7 +60,7 @@ div.reverse-items {
 ```
 
 **In Reverse Scroll, CdkVirtualScrollViewport's measureScrollOffset does not work. Please use the scrollOffset of this directive.**
-https://github.com/rdlabo-dev/ionic-angular-library/blob/v21.6.2/projects/scroll-strategies/src/lib/dynamic-size-virtual-scroll-strategy.ts
+https://github.com/rdlabo-dev/ionic-angular-library/blob/v22.0.0/projects/scroll-strategies/src/lib/dynamic-size-virtual-scroll-strategy.ts
 
 The reverse layout uses negative native `scrollTop` values. `scrollToIndex()` accepts a logical item index as usual and converts its cumulative offset to that native coordinate internally.
 
@@ -72,4 +72,4 @@ This package contains a Helper Service that simplifies development with Virtual 
 import { DynamicSizeVirtualScrollService } from '@rdlabo/ngx-cdk-scroll-strategies';
 ```
 
-Detail is here: https://github.com/rdlabo-dev/ionic-angular-library/blob/v21.6.2/projects/scroll-strategies/src/lib/dynamic-size-virtual-scroll.service.ts
+Detail is here: https://github.com/rdlabo-dev/ionic-angular-library/blob/v22.0.0/projects/scroll-strategies/src/lib/dynamic-size-virtual-scroll.service.ts

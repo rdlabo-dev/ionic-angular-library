@@ -1,31 +1,42 @@
-Present `PhotoViewerPage` in an Ionic modal. Call this after [Installation](../README.md#installation).
+Present `PhotoViewerPage` from a button or existing page method via Ionic Modal. Call this after [Installation](../README.md#installation). Install `swiper` when using the viewer.
 
 ```typescript
+import { Component, inject } from '@angular/core';
+import { ModalController, IonButton } from '@ionic/angular';
 import { PhotoViewerProps, PhotoViewerResult } from '@rdlabo/ionic-angular-photo-editor';
 import { PhotoViewerPage } from '@rdlabo/ionic-angular-photo-editor/viewer';
 
-(async () => {
-  const componentProps = {
-    imageUrls: ['https://picsum.photos/200/300', 'https://picsum.photos/200/301'],
-    index: 0,
-    isCircle: false,
-    enableDelete: true,
-    toolbarColorScheme: 'dark',
-    imageAlt: (url, index) => `Photo ${index + 1}`,
-    labels: {
-      delete: 'Delete',
-    },
-  } satisfies PhotoViewerProps;
-  const modal = await this.modalCtrl.create({
-    component: PhotoViewerPage,
-    componentProps,
-  });
-  await modal.present();
-  const { data } = await modal.onWillDismiss<PhotoViewerResult>();
-  if (data?.action === 'delete') {
-    console.log(data.index, data.value);
+@Component({
+  selector: 'app-view-photos',
+  imports: [IonButton],
+  template: `<ion-button type="button" (click)="openViewer()">View photos</ion-button>`,
+})
+export class ViewPhotosPage {
+  private readonly modalCtrl = inject(ModalController);
+
+  async openViewer(): Promise<void> {
+    const componentProps = {
+      imageUrls: ['https://picsum.photos/200/300', 'https://picsum.photos/200/301'],
+      index: 0,
+      isCircle: false,
+      enableDelete: true,
+      toolbarColorScheme: 'dark',
+      imageAlt: (url, index) => `Photo ${index + 1}`,
+      labels: {
+        delete: 'Delete',
+      },
+    } satisfies PhotoViewerProps;
+    const modal = await this.modalCtrl.create({
+      component: PhotoViewerPage,
+      componentProps,
+    });
+    await modal.present();
+    const { data } = await modal.onWillDismiss<PhotoViewerResult>();
+    if (data?.action === 'delete') {
+      console.log(data.index, data.value);
+    }
   }
-})();
+}
 ```
 
 ## Modal result

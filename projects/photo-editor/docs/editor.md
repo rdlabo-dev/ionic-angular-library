@@ -1,34 +1,45 @@
-Present `PhotoEditorPage` in an Ionic modal. Call this after [Installation](../README.md#installation).
+Present `PhotoEditorPage` from a button or existing page method via Ionic Modal. Call this after [Installation](../README.md#installation).
 
 ```typescript
+import { Component, inject } from '@angular/core';
+import type { ApplicationConfig } from '@angular/core';
+import { ModalController, IonButton } from '@ionic/angular';
 import { PhotoEditorProps, PhotoEditorResult, providePhotoEditor } from '@rdlabo/ionic-angular-photo-editor';
 import { PhotoEditorPage } from '@rdlabo/ionic-angular-photo-editor/editor';
 import { createTuiImageEditor } from '@rdlabo/ionic-angular-photo-editor/editor/tui';
 
-// app.config.ts
-export const appConfig = {
+export const appConfig: ApplicationConfig = {
   providers: [providePhotoEditor({ createImageEditor: createTuiImageEditor })],
 };
 
-(async () => {
-  const componentProps = {
-    requireSquare: false,
-    value: 'https://picsum.photos/200/300',
-    toolbarColorScheme: 'dark',
-    labels: {
-      save: '送信', // override default '保存'
-    },
-  } satisfies PhotoEditorProps;
-  const modal = await this.modalCtrl.create({
-    component: PhotoEditorPage,
-    componentProps,
-  });
-  await modal.present();
-  const { data } = await modal.onWillDismiss<PhotoEditorResult>();
-  if (data?.action === 'save') {
-    console.log(data.value);
+@Component({
+  selector: 'app-edit-photo',
+  imports: [IonButton],
+  template: `<ion-button type="button" (click)="openEditor()">Edit photo</ion-button>`,
+})
+export class EditPhotoPage {
+  private readonly modalCtrl = inject(ModalController);
+
+  async openEditor(): Promise<void> {
+    const componentProps = {
+      requireSquare: false,
+      value: 'https://picsum.photos/200/300',
+      toolbarColorScheme: 'dark',
+      labels: {
+        save: '送信', // override default '保存'
+      },
+    } satisfies PhotoEditorProps;
+    const modal = await this.modalCtrl.create({
+      component: PhotoEditorPage,
+      componentProps,
+    });
+    await modal.present();
+    const { data } = await modal.onWillDismiss<PhotoEditorResult>();
+    if (data?.action === 'save') {
+      console.log(data.value);
+    }
   }
-})();
+}
 ```
 
 ## Modal result
