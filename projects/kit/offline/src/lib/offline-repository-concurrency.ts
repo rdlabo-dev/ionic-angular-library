@@ -20,8 +20,7 @@ export class OfflineReplicaTransientWriteError extends Error {
   }
 }
 
-export function normalizeOfflineReplicaTransientWriteError(error: unknown): unknown {
-  if (error instanceof OfflineReplicaTransientWriteError) return error;
+function transientSqliteLockReason(error: unknown): Extract<OfflineReplicaTransientWriteReason, 'sqlite_busy' | 'sqlite_locked'> | null {
   const code =
     typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
       ? (error as { code: string }).code.toUpperCase()
@@ -29,7 +28,7 @@ export function normalizeOfflineReplicaTransientWriteError(error: unknown): unkn
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
   const normalizedMessage = message.toUpperCase();
   if (code.includes('SQLITE_BUSY') || normalizedMessage.includes('SQLITE_BUSY')) {
-    return new OfflineReplicaTransientWriteError('sqlite_busy', message || 'SQLite is busy.', { cause: error });
+    return 'sqlite_busy';
   }
   if (
     code.includes('SQLITE_LOCKED') ||
@@ -37,7 +36,28 @@ export function normalizeOfflineReplicaTransientWriteError(error: unknown): unkn
     message.includes('database is locked') ||
     message.includes('database table is locked')
   ) {
-    return new OfflineReplicaTransientWriteError('sqlite_locked', message || 'SQLite database is locked.', { cause: error });
+    return 'sqlite_locked';
+  }
+  return null;
+}
+
+/** Returns whether SQLite reported a transient busy/locked condition in any supported error shape. */
+export function isTransientSqliteLockError(error: unknown): boolean {
+  return error instanceof OfflineReplicaTransientWriteError
+    ? error.reason === 'sqlite_busy' || error.reason === 'sqlite_locked'
+    : transientSqliteLockReason(error) !== null;
+}
+
+export function normalizeOfflineReplicaTransientWriteError(error: unknown): unknown {
+  if (error instanceof OfflineReplicaTransientWriteError) return error;
+  const reason = transientSqliteLockReason(error);
+  if (reason) {
+    const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+    return new OfflineReplicaTransientWriteError(
+      reason,
+      message || (reason === 'sqlite_busy' ? 'SQLite is busy.' : 'SQLite database is locked.'),
+      { cause: error },
+    );
   }
   return error;
 }
