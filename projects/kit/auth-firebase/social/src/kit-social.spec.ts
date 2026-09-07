@@ -78,6 +78,11 @@ const hooks = () => ({
 });
 
 beforeEach(() => {
+  // Exercise the frame boundary without depending on jsdom's display scheduler in CI.
+  vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+    queueMicrotask(() => callback(0));
+    return 0;
+  });
   isNativePlatform.mockReturnValue(true);
   getPlatform.mockReturnValue('android');
 });
