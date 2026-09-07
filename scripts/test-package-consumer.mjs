@@ -10,6 +10,10 @@ const temporaryDirectory = mkdtempSync(join(tmpdir(), 'ionic-angular-package-con
 const packageProjects = ['kit', 'photo-editor', 'scroll-header', 'scroll-strategies'];
 const commandEnvironment = { ...process.env, npm_config_cache: join(temporaryDirectory, 'npm-cache') };
 const installedPackages = new Map();
+const kitPackageName = '@rdlabo/ionic-angular-kit';
+const appleSignInPlugin = '@capawesome/capacitor-apple-sign-in';
+const facebookLoginPlugin = '@capacitor-community/facebook-login';
+const googleSignInPlugin = '@capawesome/capacitor-google-sign-in';
 
 const installPackedPackage = (project) => {
   const distribution = join(workspace, 'dist', project);
@@ -37,6 +41,12 @@ const exportedModule = (packageName, exportName) => {
   const modulePath = manifest.exports?.[exportName]?.default;
   assert.equal(typeof modulePath, 'string', `${packageName} is missing export ${exportName}`);
   return resolve(target, modulePath);
+};
+
+const kitExportName = (importPath) => {
+  if (importPath === kitPackageName) return '.';
+  if (importPath.startsWith(`${kitPackageName}/`)) return `./${importPath.slice(kitPackageName.length + 1)}`;
+  return null;
 };
 
 const bundlePhotoSurface = async (exportName, forbiddenPackages, requiredImports = []) => {
@@ -78,10 +88,42 @@ const bundlePhotoSurface = async (exportName, forbiddenPackages, requiredImports
   assert.deepEqual([...observedImports].sort(), [...requiredImports].sort(), `${exportName} must use literal adapter imports`);
 };
 
+const bundleAuthFirebaseSurface = async (exportName, forbiddenPackages) => {
+  await build({
+    entryPoints: [exportedModule(kitPackageName, exportName)],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'browser',
+    nodePaths: [join(workspace, 'node_modules')],
+    logLevel: 'silent',
+    plugins: [
+      {
+        name: 'auth-firebase-provider-isolation',
+        setup(buildContext) {
+          buildContext.onResolve({ filter: /.*/ }, ({ path }) => {
+            if (forbiddenPackages.includes(path)) {
+              throw new Error(`${exportName} has a static dependency on optional peer ${path}`);
+            }
+            const kitExport = kitExportName(path);
+            if (kitExport !== null) {
+              return { path: exportedModule(kitPackageName, kitExport) };
+            }
+            if (!path.startsWith('.') && !path.startsWith('/')) {
+              return { path, external: true };
+            }
+            return undefined;
+          });
+        },
+      },
+    ],
+  });
+};
+
 try {
   packageProjects.forEach(installPackedPackage);
 
-  const kitPackage = installedPackages.get('@rdlabo/ionic-angular-kit');
+  const kitPackage = installedPackages.get(kitPackageName);
   const offlineTypesPath = kitPackage.manifest.exports?.['./offline']?.types;
   assert.equal(typeof offlineTypesPath, 'string', 'Kit is missing offline declaration export');
   const offlineDeclaration = readFileSync(resolve(kitPackage.target, offlineTypesPath), 'utf8');
@@ -103,10 +145,18 @@ try {
   await bundlePhotoSurface('./editor/tui', ['@capacitor/camera', 'swiper'], ['tui-image-editor']);
   await bundlePhotoSurface('./file/capacitor', ['swiper', 'tui-image-editor'], ['@capacitor/camera']);
 
+  await bundleAuthFirebaseSurface('./auth-firebase/apple', [facebookLoginPlugin, googleSignInPlugin]);
+  await bundleAuthFirebaseSurface('./auth-firebase/facebook', [appleSignInPlugin, googleSignInPlugin]);
+  await bundleAuthFirebaseSurface('./auth-firebase/google', [appleSignInPlugin, facebookLoginPlugin]);
+
   writeFileSync(
     join(temporaryDirectory, 'consumer.ts'),
     `import { type KitAuthInputMode } from '@rdlabo/ionic-angular-kit';
 import { provideKitAppUpdate, type KitAppUpdateOptions, type KitAppUpdateProviderOptions } from '@rdlabo/ionic-angular-kit/app-update';
+import { kitAppleLogin, type KitAppleResponse } from '@rdlabo/ionic-angular-kit/auth-firebase/apple';
+import { kitAppleLogin as legacyAppleLogin, type KitAppleResponse as LegacyAppleResponse } from '@rdlabo/ionic-angular-kit/auth-firebase/social';
+import { kitFacebookLogin, kitFacebookLogout } from '@rdlabo/ionic-angular-kit/auth-firebase/facebook';
+import { kitGoogleLogin, kitGoogleLogout } from '@rdlabo/ionic-angular-kit/auth-firebase/google';
 import { KitIonicFormField, provideKitIonicSignalForms } from '@rdlabo/ionic-angular-kit/forms';
 import { providePhotoEditor, type PhotoEditorProps, type PhotoEditorResult, type PhotoViewerProps, type PhotoViewerResult } from '@rdlabo/ionic-angular-photo-editor';
 import { PhotoEditorPage } from '@rdlabo/ionic-angular-photo-editor/editor';
@@ -133,8 +183,29 @@ const invalidConfirmUpdate: KitAppUpdateProviderOptions = { strategy: 'confirm' 
 // @ts-expect-error only confirm accepts a prompt
 const invalidBackgroundUpdate: KitAppUpdateProviderOptions = { strategy: 'background', promptForUpdate: async () => false };
 const updateProviders = [provideKitAppUpdate(backgroundUpdate), provideKitAppUpdate(extendedBackgroundUpdate), provideKitAppUpdate(new ConsumerUpdateClass()), provideKitAppUpdate(confirmUpdate)];
-const symbols = [KitIonicFormField, provideKitIonicSignalForms, provideKitAppUpdate, providePhotoEditor, PhotoEditorPage, createTuiImageEditor, PhotoFileService, loadCapacitorPhotoCamera, PhotoViewerPage, ScrollHeaderDirective, CdkDynamicSizeVirtualScroll];
-void [mode, viewerProps, editorResult, viewerResult, photoProviders, invalidConfirmUpdate, invalidBackgroundUpdate, updateProviders, symbols, calculateItemCountForPixelDistance([{ itemSize: 10 }], 5)];
+const nativeAppleResponse: KitAppleResponse = {
+  user: null,
+  email: null,
+  givenName: null,
+  familyName: null,
+  identityToken: 'id-token',
+  authorizationCode: 'native-authorization-code',
+  accessToken: null,
+};
+// Existing callers constructing the old response shape must remain source-compatible.
+const legacyAppleResponse: LegacyAppleResponse = { user: null, email: null, givenName: null, familyName: null, identityToken: null, authorizationCode: null };
+const compatibleAppleLogin: typeof kitAppleLogin = legacyAppleLogin;
+const webAppleResponse: KitAppleResponse = {
+  user: null,
+  email: null,
+  givenName: null,
+  familyName: null,
+  identityToken: 'id-token',
+  authorizationCode: null,
+  accessToken: 'web-access-token',
+};
+const symbols = [KitIonicFormField, provideKitIonicSignalForms, provideKitAppUpdate, kitAppleLogin, kitFacebookLogin, kitFacebookLogout, kitGoogleLogin, kitGoogleLogout, providePhotoEditor, PhotoEditorPage, createTuiImageEditor, PhotoFileService, loadCapacitorPhotoCamera, PhotoViewerPage, ScrollHeaderDirective, CdkDynamicSizeVirtualScroll];
+void [mode, viewerProps, editorResult, viewerResult, photoProviders, invalidConfirmUpdate, invalidBackgroundUpdate, updateProviders, nativeAppleResponse, webAppleResponse, legacyAppleResponse, compatibleAppleLogin, symbols, calculateItemCountForPixelDistance([{ itemSize: 10 }], 5)];
 `,
   );
   writeFileSync(
@@ -148,6 +219,10 @@ void [mode, viewerProps, editorResult, viewerResult, photoProviders, invalidConf
         module: 'preserve',
         moduleResolution: 'bundler',
         lib: ['ES2022', 'DOM'],
+        paths: {
+          firebase: [join(workspace, 'node_modules/firebase')],
+          'firebase/*': [join(workspace, 'node_modules/firebase/*')],
+        },
       },
       files: ['./consumer.ts'],
     }),

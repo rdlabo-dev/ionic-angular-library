@@ -237,3 +237,34 @@ it('makes plugin logout best effort', async () => {
   signOut.mockRejectedValue(new Error('already signed out'));
   await expect(kitGoogleLogout()).resolves.toBeUndefined();
 });
+
+it('does not sign in a native candidate over a session changed during the plugin prompt', async () => {
+  getPlatform.mockReturnValue('ios');
+  initialize.mockResolvedValue(undefined);
+  const auth = authWith(null);
+  const replacement = { uid: 'replacement' };
+  nativeSignIn.mockImplementationOnce(async () => {
+    Object.assign(auth, { currentUser: replacement });
+    return { idToken: 'candidate-token' };
+  });
+  const exchange = vi.fn();
+  await expect(kitGoogleLogin(auth, { mode: 'new', clientId: 'race-client', exchange })).resolves.toEqual({ status: false });
+  expect(signInWithCredential).not.toHaveBeenCalled();
+  expect(exchange).not.toHaveBeenCalled();
+  expect(auth.currentUser).toBe(replacement);
+});
+
+it('pins the user before the asynchronous before hook', async () => {
+  getPlatform.mockReturnValue('web');
+  const auth = authWith({ uid: 'original' });
+  await expect(
+    kitGoogleLogin(auth, {
+      mode: 'link',
+      clientId: 'client',
+      before: async () => {
+        Object.assign(auth, { currentUser: { uid: 'replacement' } });
+      },
+    }),
+  ).resolves.toEqual({ status: false });
+  expect(linkWithPopup).not.toHaveBeenCalled();
+});

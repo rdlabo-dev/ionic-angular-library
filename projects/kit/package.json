@@ -24,13 +24,13 @@
     "@capacitor/status-bar": ">=7.0.0 <9.0.0",
     "@capacitor-community/in-app-review": ">=7.0.0 <9.0.0",
     "@capacitor-community/facebook-login": ">=8.0.0 <9.0.0",
-    "@capacitor-community/apple-sign-in": "*",
     "@capawesome/capacitor-google-sign-in": "^0.1.4",
     "@rdlabo/capacitor-brotherprint": ">=7.0.0 <9.0.0",
     "dom-to-image-more": "^3.0.0",
     "pdf-lib": "^1.17.1",
     "firebase": ">=11 <13",
-    "rxjs": "^7.8.0"
+    "rxjs": "^7.8.0",
+    "@capawesome/capacitor-apple-sign-in": ">=0.1.4 <1"
   },
   "peerDependenciesMeta": {
     "@angular/service-worker": {
@@ -54,9 +54,6 @@
     "@capacitor-community/facebook-login": {
       "optional": true
     },
-    "@capacitor-community/apple-sign-in": {
-      "optional": true
-    },
     "@capawesome/capacitor-google-sign-in": {
       "optional": true
     },
@@ -67,6 +64,9 @@
       "optional": true
     },
     "pdf-lib": {
+      "optional": true
+    },
+    "@capawesome/capacitor-apple-sign-in": {
       "optional": true
     }
   },
