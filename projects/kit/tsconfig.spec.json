@@ -17,6 +17,7 @@
     "forms/src/**/*.spec.ts",
     "offline/src/**/*.spec.ts",
     "auth-firebase/src/**/*.spec.ts",
-    "auth-firebase/social/src/**/*.spec.ts"
+    "auth-firebase/social/src/**/*.spec.ts",
+    "auth-firebase/google/src/**/*.spec.ts"
   ]
 }

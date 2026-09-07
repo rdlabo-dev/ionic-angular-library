@@ -248,7 +248,7 @@ describe('kitAppleLogin', () => {
     signInWithPopup.mockRejectedValueOnce(fbError('auth/popup-closed-by-user'));
     const h2 = hooks();
     expect(await kitAppleLogin(authWith(null), { mode: 'new', ...h2 })).toEqual({ status: false });
-    expect(h2.error).toHaveBeenCalledWith('other', expect.anything());
+    expect(h2.error).toHaveBeenCalledWith('cancelled', expect.anything());
     expect(h2.finally).toHaveBeenCalledTimes(1);
   });
 });

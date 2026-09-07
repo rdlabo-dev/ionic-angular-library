@@ -85,7 +85,7 @@ const classifyOAuthError = (e: unknown): KitOAuthErrorCategory => {
   if (code === 'auth/credential-already-in-use') {
     return 'already-in-use';
   }
-  if (code === 'auth/user-cancelled') {
+  if (code === 'auth/user-cancelled' || code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
     return 'cancelled';
   }
   return 'other';

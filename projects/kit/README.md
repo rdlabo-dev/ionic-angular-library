@@ -29,7 +29,8 @@ import { disableHandler, KitStorageService } from '@rdlabo/ionic-angular-kit';
 @Component({
   selector: 'app-preferences-demo',
   imports: [IonButton],
-  template: `<ion-button type="button" (click)="disableHandler($event, save())">Save preference</ion-button><p>{{ result() }}</p>`,
+  template: `<ion-button type="button" (click)="disableHandler($event, save())">Save preference</ion-button>
+    <p>{{ result() }}</p>`,
 })
 export class PreferencesDemo {
   private readonly storage = inject(KitStorageService);
@@ -59,19 +60,23 @@ The core package declares `@ionic/storage-angular` and Capacitor Core, App, Hapt
 
 Firebase, social login, Live Update, Preferences, Status Bar, in-app review, and printer/PDF dependencies are optional feature peers. Install only the dependencies used by the selected secondary entry points and follow each plugin's own compatibility range; some optional plugins support only Capacitor 8.
 
+The `/auth-firebase/google` entry point uses `@capawesome/capacitor-google-sign-in` 0.1.x and therefore requires Capacitor 8. Applications remaining on Capacitor 7 can continue to use the core Kit and other compatible entry points, but cannot use this Google entry point.
+
 ## Entry points
 
-| Import                                    | Responsibility                                                                     |
-| ----------------------------------------- | ---------------------------------------------------------------------------------- |
-| `@rdlabo/ionic-angular-kit`               | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities     |
-| `@rdlabo/ionic-angular-kit/offline`       | **Experimental.** Scoped local replica, outbox, pull, replay, and request policies |
-| `@rdlabo/ionic-angular-kit/theme`         | Persisted light/dark theme and native status bar sync                              |
-| `@rdlabo/ionic-angular-kit/forms`         | Ionic error text and state classes for Angular Signal Forms                        |
-| `@rdlabo/ionic-angular-kit/review`        | Throttled native in-app review requests                                            |
-| `@rdlabo/ionic-angular-kit/printer`       | DOM-to-PNG, Brother label, and PDF helpers                                         |
-| `@rdlabo/ionic-angular-kit/auth-firebase` | Firebase dependency wiring and authentication flows                                |
-| `@rdlabo/ionic-angular-kit/app-update`    | Atomic Angular service-worker update transitions                                   |
-| `@rdlabo/ionic-angular-kit/live-update`   | Capawesome Live Update readiness provider                                          |
+| Import                                           | Responsibility                                                                     |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `@rdlabo/ionic-angular-kit`                      | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities     |
+| `@rdlabo/ionic-angular-kit/offline`              | **Experimental.** Scoped local replica, outbox, pull, replay, and request policies |
+| `@rdlabo/ionic-angular-kit/theme`                | Persisted light/dark theme and native status bar sync                              |
+| `@rdlabo/ionic-angular-kit/forms`                | Ionic error text and state classes for Angular Signal Forms                        |
+| `@rdlabo/ionic-angular-kit/review`               | Throttled native in-app review requests                                            |
+| `@rdlabo/ionic-angular-kit/printer`              | DOM-to-PNG, Brother label, and PDF helpers                                         |
+| `@rdlabo/ionic-angular-kit/auth-firebase`        | Firebase dependency wiring and authentication flows                                |
+| `@rdlabo/ionic-angular-kit/auth-firebase/google` | Google popup/native sign-in, Firebase session linking, and logout                  |
+| `@rdlabo/ionic-angular-kit/auth-firebase/social` | Apple and Facebook Firebase social-auth helpers                                    |
+| `@rdlabo/ionic-angular-kit/app-update`           | Atomic Angular service-worker update transitions                                   |
+| `@rdlabo/ionic-angular-kit/live-update`          | Capawesome Live Update readiness provider                                          |
 
 Secondary entry points isolate optional native and SDK dependencies from the core bundle.
 
