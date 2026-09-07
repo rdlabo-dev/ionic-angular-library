@@ -57,7 +57,7 @@ The `/printer` entry point contains pure helpers for DOM-to-PNG rendering, image
 
 The `/auth-firebase` entry point initializes `firebase/auth` through `provideKitFirebase()` and exposes `KIT_FIREBASE_AUTH` plus flow helpers such as `kitSignIn`, `kitSignUp`, `kitSignOut`, `kitResolveAuthStatus`, and `kitReauthWithRetry`.
 
-The kit performs no UI. Hooks carry loading, navigation, and error presentation back to the application. Social providers are isolated further under `/auth-firebase/social`.
+The kit performs no UI. Hooks carry loading, navigation, and error presentation back to the application. Social providers have separate `/auth-firebase/apple`, `/auth-firebase/facebook`, and `/auth-firebase/google` entry points, so each provider needs only its own optional plugin. The combined `/auth-firebase/social` entry point is **deprecated and retained for backwards compatibility**; migrate its Apple imports to `/apple` and its Facebook imports to `/facebook`.
 
 ## Live Update
 

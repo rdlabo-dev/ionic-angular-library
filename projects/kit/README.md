@@ -62,21 +62,27 @@ Firebase, social login, Live Update, Preferences, Status Bar, in-app review, and
 
 The `/auth-firebase/google` entry point uses `@capawesome/capacitor-google-sign-in` 0.1.x and therefore requires Capacitor 8. Applications remaining on Capacitor 7 can continue to use the core Kit and other compatible entry points, but cannot use this Google entry point.
 
+Install only the native plugin for the provider entry point you import. `/auth-firebase/social` is deprecated but retained for backwards compatibility; it reexports Apple and Facebook and therefore requires both plugins. Migrate imports to `/auth-firebase/apple` and `/auth-firebase/facebook` when convenient; removal is not part of this change. `/auth-firebase/internal` is a provider-neutral shared implementation used by those entry points; it is not a supported application API.
+
+Social login callbacks pin request identity via the authenticated `user` on the success payload. Failures in `before`/`success` (and Google `exchange`) are reported to `error`, return `{ status: false }`, and always run `finally`. Failures inside `error`/`finally` themselves reject the call. Native Apple runs on iOS only; web uses the Firebase popup. Cancellation is classified only when the native adapter preserves a cancellation code; unknown native errors are `other` (do not infer cancellation from localized messages).
+
 ## Entry points
 
-| Import                                           | Responsibility                                                                     |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `@rdlabo/ionic-angular-kit`                      | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities     |
-| `@rdlabo/ionic-angular-kit/offline`              | **Experimental.** Scoped local replica, outbox, pull, replay, and request policies |
-| `@rdlabo/ionic-angular-kit/theme`                | Persisted light/dark theme and native status bar sync                              |
-| `@rdlabo/ionic-angular-kit/forms`                | Ionic error text and state classes for Angular Signal Forms                        |
-| `@rdlabo/ionic-angular-kit/review`               | Throttled native in-app review requests                                            |
-| `@rdlabo/ionic-angular-kit/printer`              | DOM-to-PNG, Brother label, and PDF helpers                                         |
-| `@rdlabo/ionic-angular-kit/auth-firebase`        | Firebase dependency wiring and authentication flows                                |
-| `@rdlabo/ionic-angular-kit/auth-firebase/google` | Google popup/native sign-in, Firebase session linking, and logout                  |
-| `@rdlabo/ionic-angular-kit/auth-firebase/social` | Apple and Facebook Firebase social-auth helpers                                    |
-| `@rdlabo/ionic-angular-kit/app-update`           | Atomic Angular service-worker update transitions                                   |
-| `@rdlabo/ionic-angular-kit/live-update`          | Capawesome Live Update readiness provider                                          |
+| Import                                             | Responsibility                                                                     |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `@rdlabo/ionic-angular-kit`                        | Storage, overlays, guards, HTTP, realtime, directives, keyboard, and utilities     |
+| `@rdlabo/ionic-angular-kit/offline`                | **Experimental.** Scoped local replica, outbox, pull, replay, and request policies |
+| `@rdlabo/ionic-angular-kit/theme`                  | Persisted light/dark theme and native status bar sync                              |
+| `@rdlabo/ionic-angular-kit/forms`                  | Ionic error text and state classes for Angular Signal Forms                        |
+| `@rdlabo/ionic-angular-kit/review`                 | Throttled native in-app review requests                                            |
+| `@rdlabo/ionic-angular-kit/printer`                | DOM-to-PNG, Brother label, and PDF helpers                                         |
+| `@rdlabo/ionic-angular-kit/auth-firebase`          | Firebase dependency wiring and authentication flows                                |
+| `@rdlabo/ionic-angular-kit/auth-firebase/apple`    | Apple sign-in/link (own Apple plugin only)                                         |
+| `@rdlabo/ionic-angular-kit/auth-firebase/facebook` | Facebook login/link/logout (own Facebook plugin only)                              |
+| `@rdlabo/ionic-angular-kit/auth-firebase/google`   | Google popup/native sign-in, Firebase session linking, and logout                  |
+| `@rdlabo/ionic-angular-kit/auth-firebase/social`   | **Deprecated, retained for compatibility.** Apple/Facebook helpers                 |
+| `@rdlabo/ionic-angular-kit/app-update`             | Atomic Angular service-worker update transitions                                   |
+| `@rdlabo/ionic-angular-kit/live-update`            | Capawesome Live Update readiness provider                                          |
 
 Secondary entry points isolate optional native and SDK dependencies from the core bundle.
 

@@ -1,4 +1,7 @@
-import type { Auth } from 'firebase/auth';
+import { kitAppleLogin as appleLogin } from '@rdlabo/ionic-angular-kit/auth-firebase/apple';
+import { kitFacebookLogin as facebookFlow, kitFacebookLogout as facebookLogoutFlow } from '@rdlabo/ionic-angular-kit/auth-firebase/facebook';
+import type { Auth, User } from 'firebase/auth';
+// Compatibility entrypoint: re-exports apple/facebook (keep exercised).
 import { kitAppleLogin, kitFacebookLogin, kitFacebookLogout } from './kit-social';
 
 const signInWithCredential = vi.fn();
@@ -55,6 +58,17 @@ vi.mock('@capacitor-community/apple-sign-in', () => ({
 
 const fbError = (code: string) => Object.assign(new Error(code), { code });
 const authWith = (currentUser: unknown): Auth => ({ currentUser }) as unknown as Auth;
+const setCurrentUser = (auth: Auth, user: User | null) => {
+  (auth as unknown as { currentUser: User | null }).currentUser = user;
+};
+
+/** Successful Firebase credential sign-in must pin auth.currentUser to the returned user. */
+const mockSignInSuccess = (auth: Auth, user: User) => {
+  signInWithCredential.mockImplementationOnce(async () => {
+    setCurrentUser(auth, user);
+    return { user };
+  });
+};
 
 const hooks = () => ({
   before: vi.fn().mockResolvedValue(undefined),
@@ -74,30 +88,32 @@ afterEach(() => {
 
 describe('kitFacebookLogin', () => {
   it("mode 'new' signs in, then runs before → success (with payload) → finally", async () => {
+    const user = { uid: 'u1' } as User;
+    const auth = authWith(null);
     facebookLogin.mockResolvedValueOnce({ accessToken: { token: 'tok' } });
-    signInWithCredential.mockResolvedValueOnce({ user: { uid: 'u1' } });
+    mockSignInSuccess(auth, user);
     const h = hooks();
 
-    const res = await kitFacebookLogin(authWith(null), { mode: 'new', permissions: [], ...h });
+    const res = await kitFacebookLogin(auth, { mode: 'new', permissions: [], ...h });
 
     expect(res).toEqual({ status: true });
     expect(signInWithCredential).toHaveBeenCalled();
     expect(h.before).toHaveBeenCalledTimes(1);
-    expect(h.success).toHaveBeenCalledWith({ accessToken: 'tok', mode: 'new' });
+    expect(h.success).toHaveBeenCalledWith({ accessToken: 'tok', mode: 'new', user });
     expect(h.error).not.toHaveBeenCalled();
     expect(h.finally).toHaveBeenCalledTimes(1);
   });
 
-  it('returns {status:false} without reporting when the plugin login is cancelled', async () => {
+  it('reports plugin login cancellation via error(cancelled)', async () => {
     facebookLogin.mockResolvedValueOnce(undefined);
     const h = hooks();
     const res = await kitFacebookLogin(authWith(null), { mode: 'new', permissions: [], ...h });
     expect(res).toEqual({ status: false });
-    expect(h.error).not.toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalledWith('cancelled', expect.objectContaining({ code: 'auth/user-cancelled' }));
     expect(signInWithCredential).not.toHaveBeenCalled();
   });
 
-  it('treats the web plugin null-token rejection as a silent cancellation', async () => {
+  it('reports the web plugin null-token rejection as cancelled', async () => {
     isNativePlatform.mockReturnValue(false);
     facebookLogin.mockRejectedValueOnce({ accessToken: { token: null } });
     const animationFrame = vi.spyOn(globalThis, 'requestAnimationFrame');
@@ -106,7 +122,7 @@ describe('kitFacebookLogin', () => {
     await expect(kitFacebookLogin(authWith(null), { mode: 'new', permissions: [], ...h })).resolves.toEqual({ status: false });
 
     expect(animationFrame).toHaveBeenCalledOnce();
-    expect(h.error).not.toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalledWith('cancelled', expect.anything());
     expect(signInWithCredential).not.toHaveBeenCalled();
     expect(h.finally).toHaveBeenCalledOnce();
   });
@@ -137,15 +153,15 @@ describe('kitFacebookLogin', () => {
     expect(h.finally).toHaveBeenCalledOnce();
   });
 
-  it('rethrows a before-hook failure after running finally without calling the plugin', async () => {
+  it('reports a before-hook failure with status:false without calling the plugin', async () => {
     const boom = new Error('preflight failed');
     const h = hooks();
     h.before.mockRejectedValueOnce(boom);
 
-    await expect(kitFacebookLogin(authWith(null), { mode: 'new', permissions: [], ...h })).rejects.toBe(boom);
+    await expect(kitFacebookLogin(authWith(null), { mode: 'new', permissions: [], ...h })).resolves.toEqual({ status: false });
 
     expect(facebookLogin).not.toHaveBeenCalled();
-    expect(h.error).not.toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalledWith('other', boom);
     expect(h.finally).toHaveBeenCalledOnce();
   });
 
@@ -163,30 +179,34 @@ describe('kitFacebookLogin', () => {
   it('uses the iOS OIDC nonce path (OAuthProvider) on native iOS', async () => {
     isNativePlatform.mockReturnValue(true);
     getPlatform.mockReturnValue('ios');
+    const user = { uid: 'ios' } as User;
+    const auth = authWith(null);
     facebookLogin.mockResolvedValueOnce({ accessToken: { token: 'tok' } });
-    signInWithCredential.mockResolvedValueOnce({});
+    mockSignInSuccess(auth, user);
     const h = hooks();
-    await kitFacebookLogin(authWith(null), { mode: 'new', permissions: [], ...h });
+    await kitFacebookLogin(auth, { mode: 'new', permissions: [], ...h });
     const cred = signInWithCredential.mock.calls[0][1] as { providerId?: string };
     expect(cred.providerId).toBe('facebook.com'); // OAuthProvider credential, not FacebookAuthProvider
   });
 
   it("mode 'link' links then afterCredential + onSuccess", async () => {
+    const user = { uid: 'u1' } as User;
     facebookLogin.mockResolvedValueOnce({ accessToken: { token: 'tok' } });
     linkWithCredential.mockResolvedValueOnce({});
     const h = hooks();
-    const res = await kitFacebookLogin(authWith({ uid: 'u1' }), { mode: 'link', permissions: [], ...h });
+    const res = await kitFacebookLogin(authWith(user), { mode: 'link', permissions: [], ...h });
     expect(res).toEqual({ status: true });
     expect(linkWithCredential).toHaveBeenCalled();
-    expect(h.success).toHaveBeenCalledWith({ accessToken: 'tok', mode: 'link' });
+    expect(h.success).toHaveBeenCalledWith({ accessToken: 'tok', mode: 'link', user });
   });
 
   it("mode 'credential' re-auths then links the email credential", async () => {
+    const user = { uid: 'u1' } as User;
     facebookLogin.mockResolvedValueOnce({ accessToken: { token: 'tok' } });
     reauthenticateWithCredential.mockResolvedValueOnce({});
     linkWithCredential.mockResolvedValueOnce({});
     const h = hooks();
-    const res = await kitFacebookLogin(authWith({ uid: 'u1' }), {
+    const res = await kitFacebookLogin(authWith(user), {
       mode: 'credential',
       emailLogin: { email: 'e@x.com', password: 'pw' },
       permissions: [],
@@ -194,55 +214,153 @@ describe('kitFacebookLogin', () => {
     });
     expect(res).toEqual({ status: true });
     expect(reauthenticateWithCredential).toHaveBeenCalled();
-    expect(linkWithCredential).toHaveBeenCalledWith({ uid: 'u1' }, { email: 'e@x.com', password: 'pw' });
+    expect(linkWithCredential).toHaveBeenCalledWith(user, { email: 'e@x.com', password: 'pw' });
+  });
+
+  it('does not link or succeed when currentUser switches during pending native Facebook login', async () => {
+    const original = { uid: 'u1' } as User;
+    const auth = authWith(original);
+    facebookLogin.mockImplementationOnce(async () => {
+      setCurrentUser(auth, { uid: 'switched' } as User);
+      return { accessToken: { token: 'tok' } };
+    });
+    const h = hooks();
+
+    await expect(kitFacebookLogin(auth, { mode: 'link', permissions: [], ...h })).resolves.toEqual({ status: false });
+
+    expect(linkWithCredential).not.toHaveBeenCalled();
+    expect(h.success).not.toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalledWith('other', expect.objectContaining({ message: 'kit social: Firebase user changed' }));
+  });
+
+  it('does not link a password when currentUser switches during credential reauthentication', async () => {
+    const original = { uid: 'u1' } as User;
+    const auth = authWith(original);
+    facebookLogin.mockResolvedValueOnce({ accessToken: { token: 'tok' } });
+    reauthenticateWithCredential.mockImplementationOnce(async () => {
+      setCurrentUser(auth, { uid: 'switched' } as User);
+    });
+    const h = hooks();
+
+    await expect(
+      kitFacebookLogin(auth, {
+        mode: 'credential',
+        emailLogin: { email: 'e@x.com', password: 'pw' },
+        permissions: [],
+        ...h,
+      }),
+    ).resolves.toEqual({ status: false });
+
+    expect(linkWithCredential).not.toHaveBeenCalled();
+    expect(h.success).not.toHaveBeenCalled();
   });
 });
 
 describe('kitAppleLogin', () => {
-  it('rethrows a before-hook failure after running finally without calling the plugin', async () => {
+  it('reports a before-hook failure with status:false without calling the plugin', async () => {
     const boom = new Error('preflight failed');
     const h = hooks();
     h.before.mockRejectedValueOnce(boom);
 
-    await expect(kitAppleLogin(authWith(null), { mode: 'new', ...h })).rejects.toBe(boom);
+    await expect(kitAppleLogin(authWith(null), { mode: 'new', ...h })).resolves.toEqual({ status: false });
 
     expect(appleAuthorize).not.toHaveBeenCalled();
-    expect(h.error).not.toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalledWith('other', boom);
     expect(h.finally).toHaveBeenCalledOnce();
   });
 
   it('native: authorizes, applies credential, success gets the apple response', async () => {
     isNativePlatform.mockReturnValue(true);
+    getPlatform.mockReturnValue('ios');
+    const user = { uid: 'apple' } as User;
+    const auth = authWith(null);
     appleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'it', email: 'a@b.com' } });
-    signInWithCredential.mockResolvedValueOnce({});
+    mockSignInSuccess(auth, user);
     const h = hooks();
-    const res = await kitAppleLogin(authWith(null), { mode: 'new', ...h });
+    const res = await kitAppleLogin(auth, { mode: 'new', ...h });
     expect(res).toEqual({ status: true });
     expect(h.success).toHaveBeenCalledWith({
       response: expect.objectContaining({ identityToken: 'it', email: 'a@b.com' }),
       mode: 'new',
+      user,
     });
     expect(h.finally).toHaveBeenCalledTimes(1);
   });
 
-  it('native: cancelled authorize → {status:false}', async () => {
+  it('native: authorize undefined is an other error rather than silent cancellation', async () => {
     isNativePlatform.mockReturnValue(true);
+    getPlatform.mockReturnValue('ios');
     appleAuthorize.mockResolvedValueOnce(undefined);
     const h = hooks();
     expect(await kitAppleLogin(authWith(null), { mode: 'new', ...h })).toEqual({ status: false });
+    expect(h.error).toHaveBeenCalledWith('other', expect.anything());
     expect(signInWithCredential).not.toHaveBeenCalled();
+  });
+
+  it('native: operational reject is reported with the original error', async () => {
+    isNativePlatform.mockReturnValue(true);
+    getPlatform.mockReturnValue('ios');
+    const boom = new Error('ASAuthorization failed');
+    appleAuthorize.mockRejectedValueOnce(boom);
+    const h = hooks();
+
+    await expect(kitAppleLogin(authWith(null), { mode: 'new', ...h })).resolves.toEqual({ status: false });
+
+    expect(h.error).toHaveBeenCalledWith('other', boom);
+    expect(signInWithCredential).not.toHaveBeenCalled();
+  });
+
+  it.each([1001, '1001'])('native: classifies ASAuthorizationError.canceled (%s) as cancelled', async (code) => {
+    isNativePlatform.mockReturnValue(true);
+    getPlatform.mockReturnValue('ios');
+    const cancelled = Object.assign(new Error('canceled'), { code });
+    appleAuthorize.mockRejectedValueOnce(cancelled);
+    const h = hooks();
+
+    await expect(kitAppleLogin(authWith(null), { mode: 'new', ...h })).resolves.toEqual({ status: false });
+
+    expect(h.error).toHaveBeenCalledWith('cancelled', cancelled);
+  });
+
+  it('does not link or succeed when currentUser switches during pending native Apple login', async () => {
+    isNativePlatform.mockReturnValue(true);
+    getPlatform.mockReturnValue('ios');
+    const original = { uid: 'u1' } as User;
+    const auth = authWith(original);
+    appleAuthorize.mockImplementationOnce(async () => {
+      setCurrentUser(auth, { uid: 'switched' } as User);
+      return { response: { identityToken: 'it', email: 'a@b.com' } };
+    });
+    const h = hooks();
+
+    await expect(kitAppleLogin(auth, { mode: 'link', ...h })).resolves.toEqual({ status: false });
+
+    expect(linkWithCredential).not.toHaveBeenCalled();
+    expect(h.success).not.toHaveBeenCalled();
+    expect(h.error).toHaveBeenCalledWith('other', expect.objectContaining({ message: 'kit social: Firebase user changed' }));
   });
 
   it("web 'new': uses signInWithPopup, synthesizes the response, routes errors to error", async () => {
     isNativePlatform.mockReturnValue(false);
-    signInWithPopup.mockResolvedValueOnce({ user: { email: 'a@b.com' } });
+    const user = { email: 'a@b.com' } as User;
+    const auth = authWith(null);
+    signInWithPopup.mockImplementationOnce(async () => {
+      setCurrentUser(auth, user);
+      return { user };
+    });
     const h = hooks();
-    const res = await kitAppleLogin(authWith(null), { mode: 'new', ...h });
+    const res = await kitAppleLogin(auth, { mode: 'new', ...h });
     expect(res).toEqual({ status: true });
     expect(signInWithPopup).toHaveBeenCalled();
     expect(h.success).toHaveBeenCalledWith({
-      response: expect.objectContaining({ email: 'a@b.com', identityToken: 'id-token' }),
+      response: expect.objectContaining({
+        email: 'a@b.com',
+        identityToken: 'id-token',
+        authorizationCode: null,
+        accessToken: 'access-token',
+      }),
       mode: 'new',
+      user,
     });
 
     signInWithPopup.mockRejectedValueOnce(fbError('auth/popup-closed-by-user'));
@@ -276,4 +394,46 @@ describe('kitFacebookLogout', () => {
     await kitFacebookLogout();
     expect(facebookLogout).not.toHaveBeenCalled();
   });
+});
+
+describe('Apple credential identity boundary', () => {
+  it.each([false, true])('does not add a password after the session changes during reauthentication (native=%s)', async (native) => {
+    isNativePlatform.mockReturnValue(native);
+    getPlatform.mockReturnValue('ios');
+    const original = { uid: 'original' } as User;
+    const auth = authWith(original);
+    const changed = { uid: 'changed' } as User;
+    appleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token' } });
+    const reauthenticate = native ? reauthenticateWithCredential : reauthenticateWithPopup;
+    reauthenticate.mockImplementationOnce(async () => {
+      setCurrentUser(auth, changed);
+      return { user: original };
+    });
+    const h = hooks();
+    await expect(
+      kitAppleLogin(auth, { mode: 'credential', emailLogin: { email: 'user@example.com', password: 'password' }, ...h }),
+    ).resolves.toEqual({ status: false });
+    expect(linkWithCredential).not.toHaveBeenCalled();
+    expect(h.success).not.toHaveBeenCalled();
+    expect(auth.currentUser).toBe(changed);
+  });
+
+  it('reports an app success-hook failure and still runs finally', async () => {
+    isNativePlatform.mockReturnValue(false);
+    const user = { uid: 'current' } as User;
+    const auth = authWith(user);
+    linkWithPopup.mockResolvedValueOnce({ user });
+    const failure = new Error('backend unavailable');
+    const h = hooks();
+    h.success.mockRejectedValueOnce(failure);
+    await expect(kitAppleLogin(auth, { mode: 'link', ...h })).resolves.toEqual({ status: false });
+    expect(h.error).toHaveBeenCalledWith('other', failure);
+    expect(h.finally).toHaveBeenCalledOnce();
+  });
+});
+
+it('keeps deprecated social exports as the same provider implementations', () => {
+  expect(kitAppleLogin).toBe(appleLogin);
+  expect(kitFacebookLogin).toBe(facebookFlow);
+  expect(kitFacebookLogout).toBe(facebookLogoutFlow);
 });
