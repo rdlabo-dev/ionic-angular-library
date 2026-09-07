@@ -186,6 +186,24 @@ it('rejects a Firebase user change before exchange', async () => {
   expect(exchange).not.toHaveBeenCalled();
 });
 
+it('does not link a password when the current user changes during reauthentication', async () => {
+  getPlatform.mockReturnValue('web');
+  const original = { uid: 'original-credential' };
+  const auth = authWith(original);
+  reauthenticateWithPopup.mockImplementation(async () => {
+    (auth as unknown as { currentUser: unknown }).currentUser = { uid: 'changed-credential' };
+    return { user: original };
+  });
+  await expect(
+    kitGoogleLogin(auth, {
+      mode: 'credential',
+      clientId: 'client',
+      emailLogin: { email: 'user@example.com', password: 'password' },
+    }),
+  ).resolves.toEqual({ status: false });
+  expect(linkWithCredential).not.toHaveBeenCalled();
+});
+
 it('retries native initialization after an initialization failure', async () => {
   getPlatform.mockReturnValue('ios');
   initialize.mockRejectedValueOnce(new Error('init failed')).mockResolvedValueOnce(undefined);

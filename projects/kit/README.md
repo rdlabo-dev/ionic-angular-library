@@ -60,6 +60,8 @@ The core package declares `@ionic/storage-angular` and Capacitor Core, App, Hapt
 
 Firebase, social login, Live Update, Preferences, Status Bar, in-app review, and printer/PDF dependencies are optional feature peers. Install only the dependencies used by the selected secondary entry points and follow each plugin's own compatibility range; some optional plugins support only Capacitor 8.
 
+The `/auth-firebase/google` entry point uses `@capawesome/capacitor-google-sign-in` 0.1.x and therefore requires Capacitor 8. Applications remaining on Capacitor 7 can continue to use the core Kit and other compatible entry points, but cannot use this Google entry point.
+
 ## Entry points
 
 | Import                                           | Responsibility                                                                     |

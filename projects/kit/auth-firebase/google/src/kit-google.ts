@@ -46,6 +46,12 @@ const requireUser = (auth: Auth): User => {
   return auth.currentUser;
 };
 
+const assertCurrentUser = (auth: Auth, user: User): void => {
+  if (auth.currentUser !== user) {
+    throw new Error('kit Google login: Firebase user changed');
+  }
+};
+
 const classify = (error: unknown): KitGoogleErrorCategory => {
   const code = (error as { code?: string } | null)?.code;
   if (code === 'auth/credential-already-in-use') return 'already-in-use';
@@ -71,14 +77,19 @@ export const kitGoogleLogin = async (auth: Auth, options: KitGoogleLoginOptions)
         user = requireUser(auth);
         const result = await reauthenticateWithPopup(user, provider);
         idToken = GoogleAuthProvider.credentialFromResult(result)?.idToken ?? '';
+        assertCurrentUser(auth, user);
         await options.success?.({ idToken, mode: options.mode, user });
+        assertCurrentUser(auth, user);
         return;
       }
       if (options.mode === 'credential') {
         user = requireUser(auth);
         await reauthenticateWithPopup(user, provider);
+        assertCurrentUser(auth, user);
         await linkWithCredential(user, EmailAuthProvider.credential(options.emailLogin.email, options.emailLogin.password));
+        assertCurrentUser(auth, user);
         await options.success?.({ idToken: '', mode: options.mode, user });
+        assertCurrentUser(auth, user);
         return;
       }
       const result = options.mode === 'new' ? await signInWithPopup(auth, provider) : await linkWithPopup(requireUser(auth), provider);
@@ -97,20 +108,26 @@ export const kitGoogleLogin = async (auth: Auth, options: KitGoogleLoginOptions)
         if (options.mode === 'link') await linkWithCredential(user, credential);
         else if (options.mode === 'reauthenticate') {
           await reauthenticateWithCredential(user, credential);
+          assertCurrentUser(auth, user);
           await options.success?.({ idToken, mode: options.mode, user });
+          assertCurrentUser(auth, user);
           return;
         } else {
           await reauthenticateWithCredential(user, credential);
+          assertCurrentUser(auth, user);
           await linkWithCredential(user, EmailAuthProvider.credential(options.emailLogin.email, options.emailLogin.password));
+          assertCurrentUser(auth, user);
           await options.success?.({ idToken, mode: options.mode, user });
+          assertCurrentUser(auth, user);
           return;
         }
       }
     }
-    if (auth.currentUser !== user) throw new Error('kit Google login: Firebase user changed');
+    assertCurrentUser(auth, user);
     await options.exchange?.(idToken, user);
-    if (auth.currentUser !== user) throw new Error('kit Google login: Firebase user changed');
+    assertCurrentUser(auth, user);
     await options.success?.({ idToken, mode: options.mode, user });
+    assertCurrentUser(auth, user);
   };
   return execute()
     .then(
