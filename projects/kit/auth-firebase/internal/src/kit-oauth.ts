@@ -18,6 +18,38 @@ export interface KitSocialHooks<Info> {
   finally?: () => void | Promise<unknown>;
 }
 
+const activeOperations = new WeakSet<Auth>();
+
+/** @internal Reject overlapping kit social flows for one Auth, including across providers.
+ * Holds the guard through error/finally hooks and releases it even when a hook rejects.
+ * Direct Firebase operations outside these helpers must be coordinated by the application.
+ */
+export const runOAuthOperation = (
+  auth: Auth,
+  operation: () => Promise<void>,
+  onError: (error: unknown) => void | Promise<unknown>,
+  onFinally?: () => void | Promise<unknown>,
+): Promise<{ status: boolean }> => {
+  const busy = activeOperations.has(auth);
+  if (!busy) activeOperations.add(auth);
+  const execute = async (): Promise<void> => {
+    if (busy) throw new Error('kit social: authentication already in progress');
+    await operation();
+  };
+  return execute()
+    .then(
+      () => ({ status: true }),
+      async (error: unknown) => {
+        await onError(error);
+        return { status: false };
+      },
+    )
+    .finally(() => onFinally?.())
+    .finally(() => {
+      if (!busy) activeOperations.delete(auth);
+    });
+};
+
 /** @internal Classify Firebase SDK failures without inspecting localized messages. */
 export const classifyOAuthError = (error: unknown): KitOAuthErrorCategory => {
   const code = (error as { code?: string | number } | null)?.code;

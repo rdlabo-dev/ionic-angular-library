@@ -11,7 +11,7 @@ const packageProjects = ['kit', 'photo-editor', 'scroll-header', 'scroll-strateg
 const commandEnvironment = { ...process.env, npm_config_cache: join(temporaryDirectory, 'npm-cache') };
 const installedPackages = new Map();
 const kitPackageName = '@rdlabo/ionic-angular-kit';
-const appleSignInPlugin = '@capacitor-community/apple-sign-in';
+const appleSignInPlugin = '@capawesome/capacitor-apple-sign-in';
 const facebookLoginPlugin = '@capacitor-community/facebook-login';
 const googleSignInPlugin = '@capawesome/capacitor-google-sign-in';
 

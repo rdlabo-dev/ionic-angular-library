@@ -1,5 +1,8 @@
 import { kitAppleLogin as appleLogin } from '@rdlabo/ionic-angular-kit/auth-firebase/apple';
-import { kitFacebookLogin as facebookFlow, kitFacebookLogout as facebookLogoutFlow } from '@rdlabo/ionic-angular-kit/auth-firebase/facebook';
+import {
+  kitFacebookLogin as facebookFlow,
+  kitFacebookLogout as facebookLogoutFlow,
+} from '@rdlabo/ionic-angular-kit/auth-firebase/facebook';
 import type { Auth, User } from 'firebase/auth';
 // Compatibility entrypoint: re-exports apple/facebook (keep exercised).
 import { kitAppleLogin, kitFacebookLogin, kitFacebookLogout } from './kit-social';
@@ -52,8 +55,10 @@ vi.mock('@capacitor-community/facebook-login', () => ({
     getCurrentAccessToken: (...a: unknown[]) => facebookGetCurrentAccessToken(...a),
   },
 }));
-vi.mock('@capacitor-community/apple-sign-in', () => ({
-  SignInWithApple: { authorize: (...a: unknown[]) => appleAuthorize(...a) },
+vi.mock('@capawesome/capacitor-apple-sign-in', () => ({
+  AppleSignIn: { signIn: (...a: unknown[]) => appleAuthorize(...a) },
+  ErrorCode: { SignInCanceled: 'SIGN_IN_CANCELED' },
+  SignInScope: { Email: 'EMAIL', FullName: 'FULL_NAME' },
 }));
 
 const fbError = (code: string) => Object.assign(new Error(code), { code });
@@ -279,13 +284,29 @@ describe('kitAppleLogin', () => {
     getPlatform.mockReturnValue('ios');
     const user = { uid: 'apple' } as User;
     const auth = authWith(null);
-    appleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'it', email: 'a@b.com' } });
+    appleAuthorize.mockResolvedValueOnce({
+      idToken: 'it',
+      email: 'a@b.com',
+      user: 'apple-user',
+      givenName: null,
+      familyName: null,
+      authorizationCode: 'apple-code',
+    });
     mockSignInSuccess(auth, user);
     const h = hooks();
     const res = await kitAppleLogin(auth, { mode: 'new', ...h });
     expect(res).toEqual({ status: true });
+    expect(appleAuthorize).toHaveBeenCalledWith({ scopes: ['EMAIL', 'FULL_NAME'] });
     expect(h.success).toHaveBeenCalledWith({
-      response: expect.objectContaining({ identityToken: 'it', email: 'a@b.com' }),
+      response: {
+        user: 'apple-user',
+        identityToken: 'it',
+        authorizationCode: 'apple-code',
+        accessToken: null,
+        email: 'a@b.com',
+        givenName: null,
+        familyName: null,
+      },
       mode: 'new',
       user,
     });
@@ -315,7 +336,8 @@ describe('kitAppleLogin', () => {
     expect(signInWithCredential).not.toHaveBeenCalled();
   });
 
-  it.each([1001, '1001'])('native: classifies ASAuthorizationError.canceled (%s) as cancelled', async (code) => {
+  it('native: classifies Capawesome sign-in cancellation', async () => {
+    const code = 'SIGN_IN_CANCELED';
     isNativePlatform.mockReturnValue(true);
     getPlatform.mockReturnValue('ios');
     const cancelled = Object.assign(new Error('canceled'), { code });
@@ -334,7 +356,7 @@ describe('kitAppleLogin', () => {
     const auth = authWith(original);
     appleAuthorize.mockImplementationOnce(async () => {
       setCurrentUser(auth, { uid: 'switched' } as User);
-      return { response: { identityToken: 'it', email: 'a@b.com' } };
+      return { idToken: 'it', email: 'a@b.com', user: 'apple-user', givenName: null, familyName: null, authorizationCode: 'apple-code' };
     });
     const h = hooks();
 
@@ -408,7 +430,7 @@ describe('Apple credential identity boundary', () => {
     const original = { uid: 'original' } as User;
     const auth = authWith(original);
     const changed = { uid: 'changed' } as User;
-    appleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token' } });
+    appleAuthorize.mockResolvedValueOnce({ idToken: 'apple-token' });
     const reauthenticate = native ? reauthenticateWithCredential : reauthenticateWithPopup;
     reauthenticate.mockImplementationOnce(async () => {
       setCurrentUser(auth, changed);

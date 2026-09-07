@@ -2,7 +2,12 @@ import type { Auth, User } from 'firebase/auth';
 import { FacebookAuthProvider, OAuthProvider } from 'firebase/auth';
 import { Capacitor } from '@capacitor/core';
 import { FacebookLogin } from '@capacitor-community/facebook-login';
-import { applyOAuthCredential, assertCurrentUser, classifyOAuthError } from '@rdlabo/ionic-angular-kit/auth-firebase/internal';
+import {
+  applyOAuthCredential,
+  assertCurrentUser,
+  classifyOAuthError,
+  runOAuthOperation,
+} from '@rdlabo/ionic-angular-kit/auth-firebase/internal';
 import type { KitOAuthMode, KitOAuthModeName, KitSocialHooks } from '@rdlabo/ionic-angular-kit/auth-firebase/internal';
 
 /** Facebook login options. Permissions and app effects are owned by the consumer. */
@@ -54,15 +59,12 @@ export const kitFacebookLogin = async (auth: Auth, options: KitFacebookLoginOpti
     await options.success?.({ accessToken, mode: options.mode, user });
     assertCurrentUser(auth, user);
   };
-  return execute()
-    .then(
-      () => ({ status: true }),
-      async (error: unknown) => {
-        await options.error?.(isFacebookCancellation(error) ? 'cancelled' : classifyOAuthError(error), error);
-        return { status: false };
-      },
-    )
-    .finally(() => options.finally?.());
+  return runOAuthOperation(
+    auth,
+    execute,
+    (error) => options.error?.(isFacebookCancellation(error) ? 'cancelled' : classifyOAuthError(error), error),
+    options.finally,
+  );
 };
 
 /**

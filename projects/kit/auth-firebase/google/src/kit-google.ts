@@ -1,6 +1,6 @@
 import { ErrorCode, GoogleSignIn } from '@capawesome/capacitor-google-sign-in';
 import { Capacitor } from '@capacitor/core';
-import { assertCurrentUser, classifyOAuthError, requireUser } from '@rdlabo/ionic-angular-kit/auth-firebase/internal';
+import { assertCurrentUser, classifyOAuthError, requireUser, runOAuthOperation } from '@rdlabo/ionic-angular-kit/auth-firebase/internal';
 import type { KitOAuthErrorCategory } from '@rdlabo/ionic-angular-kit/auth-firebase/internal';
 import type { Auth, User } from 'firebase/auth';
 import {
@@ -119,15 +119,7 @@ export const kitGoogleLogin = async (auth: Auth, options: KitGoogleLoginOptions)
     await options.success?.({ idToken, mode: options.mode, user });
     assertCurrentUser(auth, user);
   };
-  return execute()
-    .then(
-      () => ({ status: true }),
-      async (error: unknown) => {
-        await options.error?.(classify(error), error);
-        return { status: false };
-      },
-    )
-    .finally(() => options.finally?.());
+  return runOAuthOperation(auth, execute, (error) => options.error?.(classify(error), error), options.finally);
 };
 
 /** Best-effort native Google SDK sign-out. */
