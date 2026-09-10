@@ -1,4 +1,4 @@
-Present `PhotoViewerPage` from a button or existing page method via Ionic Modal. Call this after [Installation](../README.md#installation). Install `swiper` when using the viewer.
+Present `PhotoViewerPage` from a button or existing page method via Ionic Modal. Call this after [Installation](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/readme#installation). Install `swiper` when using the viewer.
 
 ```typescript
 import { Component, inject } from '@angular/core';
@@ -77,7 +77,7 @@ When `true`, adds footer safe-area padding on iOS.
 
 ### toolbarColorScheme: 'light' | 'dark'
 
-**Required.** Use `dark` for a dark/black `ion-toolbar` and `light` for a light/white toolbar. See [Theme](./theme.md).
+**Required.** Use `dark` for a dark/black `ion-toolbar` and `light` for a light/white toolbar. See [Theme](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/theme).
 
 ### imageAlt: string | ((url: string, index: number) => string)
 

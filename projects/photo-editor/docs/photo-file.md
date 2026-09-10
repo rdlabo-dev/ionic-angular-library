@@ -1,4 +1,4 @@
-Load photos from the browser file picker or, on native platforms, from the camera or album. Call this after [Installation](../README.md#installation).
+Load photos from the browser file picker or, on native platforms, from the camera or album. Call this after [Installation](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/readme#installation).
 
 ## Browser: select and display
 

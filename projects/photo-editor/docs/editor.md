@@ -1,4 +1,4 @@
-Present `PhotoEditorPage` from a button or existing page method via Ionic Modal. Call this after [Installation](../README.md#installation).
+Present `PhotoEditorPage` from a button or existing page method via Ionic Modal. Call this after [Installation](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/readme#installation).
 
 ```typescript
 import { Component, inject } from '@angular/core';
@@ -67,7 +67,7 @@ Image URL or data URL to edit.
 
 ### toolbarColorScheme: 'light' | 'dark'
 
-**Required.** Use `dark` for a dark/black `ion-toolbar` and `light` for a light/white toolbar. The library cannot infer toolbar appearance from CSS, translucency, or runtime theme overrides. See [Theme](./theme.md).
+**Required.** Use `dark` for a dark/black `ion-toolbar` and `light` for a light/white toolbar. The library cannot infer toolbar appearance from CSS, translucency, or runtime theme overrides. See [Theme](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/theme).
 
 ### labels: Partial&lt;PhotoEditorLabels&gt;
 

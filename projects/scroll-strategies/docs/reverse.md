@@ -1,6 +1,6 @@
-Call this after [Installation](../README.md#installation).
+Call this after [Installation](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/readme#installation).
 
-> Reuse the data model, `dynamicSize` computed, `trackBy`, and viewport imports from [Simple Usage](./simple.md). This page adds reverse layout CSS and `[isReverse]="true"` for a chat-style list.
+> Reuse the data model, `dynamicSize` computed, `trackBy`, and viewport imports from [Simple Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/simple). This page adds reverse layout CSS and `[isReverse]="true"` for a chat-style list.
 
 - Demo: https://rdlabo-ionic-angular-library.netlify.app/main/scroll-strategies/reverse
 - Source: https://github.com/rdlabo-dev/ionic-angular-library/tree/v22.0.0/projects/demo/src/app/scroll-strategies/pages/scroll-reverse

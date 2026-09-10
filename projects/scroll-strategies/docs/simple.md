@@ -1,4 +1,4 @@
-Call this after [Installation](../README.md#installation).
+Call this after [Installation](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/readme#installation).
 
 > For items whose variable heights are already known.
 

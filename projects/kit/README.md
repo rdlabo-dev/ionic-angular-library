@@ -96,7 +96,7 @@ Most features expose a provider whose callbacks keep routes, copy, credentials, 
 
 - [Storage and Overlays](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays)
 - [Forms](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/forms)
-- [Check your Kit integration with ESLint](./docs/eslint.md)
+- [Check your Kit integration with ESLint](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/eslint)
 - [Authentication and HTTP](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/auth-http)
 - [Offline and Realtime](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/offline-realtime)
 - [Optional Features](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/optional-features)

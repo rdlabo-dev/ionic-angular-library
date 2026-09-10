@@ -1,4 +1,4 @@
-Override the editor colors after [Installation](../README.md#installation).
+Override the editor colors after [Installation](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/readme#installation).
 
 Default colors are defined in the library stylesheet. Override them with CSS variables:
 

@@ -1,4 +1,4 @@
-Call this after [Installation](../README.md#installation). Reuse the [Simple Usage](./simple.md) viewport, CDK imports, `trackBy`, and size-model rules. Replace known `itemSize` values with measured heights.
+Call this after [Installation](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/readme#installation). Reuse the [Simple Usage](https://docs.rdlabo.dev/projects/ngx-cdk-scroll-strategies/docs/simple) viewport, CDK imports, `trackBy`, and size-model rules. Replace known `itemSize` values with measured heights.
 
 > Measure each scroll item as a separate component, then write the result into the size model that drives `[itemDynamicSizes]`.
 

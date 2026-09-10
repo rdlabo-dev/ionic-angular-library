@@ -1,4 +1,4 @@
-Attach scroll-aware headers to Ionic content. Call this after [Installation](../README.md#installation). Import the package CSS globally first. Safe-area hidden headers and always-visible native headers are covered on [Safe Area](./safe-area.md).
+Attach scroll-aware headers to Ionic content. Call this after [Installation](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/readme#installation). Import the package CSS globally first. Safe-area hidden headers and always-visible native headers are covered on [Safe Area](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/safe-area).
 
 - Demo: https://rdlabo-ionic-angular-library.netlify.app/main/scroll-header
 - Source: https://github.com/rdlabo-dev/ionic-angular-library/blob/v22.0.0/projects/demo/src/app/scroll-header/scroll-header.page.html
@@ -36,4 +36,4 @@ export class ScrollHeaderPage {
 }
 ```
 
-Scroll down — the content header hides. Scroll up — it returns. The outer `ion-header.hidden` reserves safe-area space; see [Safe Area](./safe-area.md) when you need a different header layout.
+Scroll down — the content header hides. Scroll up — it returns. The outer `ion-header.hidden` reserves safe-area space; see [Safe Area](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/safe-area) when you need a different header layout.

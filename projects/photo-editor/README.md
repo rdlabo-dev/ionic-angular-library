@@ -71,7 +71,7 @@ npm install swiper
 npm install @capacitor/camera
 ```
 
-For native camera access, configure [Camera permissions](https://capacitorjs.com/docs/apis/camera#android-configuration) and the adapter in [PhotoFileService](./docs/photo-file.md). Native iOS apps require iOS/iPadOS 16.4 or later.
+For native camera access, configure [Camera permissions](https://capacitorjs.com/docs/apis/camera#android-configuration) and the adapter in [PhotoFileService](https://docs.rdlabo.dev/projects/ionic-angular-photo-editor/docs/photo-file). Native iOS apps require iOS/iPadOS 16.4 or later.
 
 ## Package entry points
 

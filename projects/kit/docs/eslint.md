@@ -48,7 +48,7 @@ These rules are also included in `rdlabo.configs.recommended`.
 
 `deny-overlay-create` reports `.create()` calls on `ModalController` and `PopoverController`. `prefer-modal-launcher` checks that `presentModal` calls live in `launch*` functions.
 
-With `overlay` and `DetailPage` from your [overlay setup](./storage-overlays.md), this is reported:
+With `overlay` and `DetailPage` from your [overlay setup](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/storage-overlays), this is reported:
 
 ```ts
 export const openDetail = () => overlay.presentModal(DetailPage);
@@ -87,7 +87,7 @@ The rule checks the wrapper call, not the async work's behavior. Keep submit act
 
 By default, `require-ion-error-text` requires an error text source on Ionic controls with `[formField]`.
 
-For Angular 22 apps using [Kit Signal Forms](./forms.md), import `FormField` and `KitIonicFormField` in each relevant component and install `provideKitIonicSignalForms()`. Then override this entry in the HTML config's `rules`:
+For Angular 22 apps using [Kit Signal Forms](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/forms), import `FormField` and `KitIonicFormField` in each relevant component and install `provideKitIonicSignalForms()`. Then override this entry in the HTML config's `rules`:
 
 ```js
 '@rdlabo/rules/require-ion-error-text': [

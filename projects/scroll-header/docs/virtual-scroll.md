@@ -1,4 +1,4 @@
-Extend an existing CDK virtual-scroll viewport with scroll-aware headers. Start from [IonContent](./ion-content.md) for the header/safe-area pattern, then replace the scroll host with a viewport. Call this after [Installation](../README.md#installation).
+Extend an existing CDK virtual-scroll viewport with scroll-aware headers. Start from [IonContent](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/ion-content) for the header/safe-area pattern, then replace the scroll host with a viewport. Call this after [Installation](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/readme#installation).
 
 - Demo: https://rdlabo-ionic-angular-library.netlify.app/main/virtual-scroll-header
 - Source: https://github.com/rdlabo-dev/ionic-angular-library/blob/v22.0.0/projects/demo/src/app/virtual-scroll-header/virtual-scroll-header.page.html
@@ -50,7 +50,7 @@ export class VirtualScrollHeaderPage {
 }
 ```
 
-Give the viewport a definite height via the global CSS from [Installation](../README.md#installation).
+Give the viewport a definite height via the global CSS from [Installation](https://docs.rdlabo.dev/projects/ionic-angular-scroll-header/docs/readme#installation).
 
 ### Prevent scroll jump / flicker at the top
 

@@ -56,4 +56,4 @@ export const appConfig: ApplicationConfig = {
 
 Angular does not merge multiple `provideSignalFormsConfig` class configurations. If the application provides its own configuration, combine all required class mappings in one provider instead of registering both providers and relying on their order.
 
-For the matching lint configuration, see [Check your Kit integration with ESLint](./eslint.md).
+For the matching lint configuration, see [Check your Kit integration with ESLint](https://docs.rdlabo.dev/projects/ionic-angular-kit/docs/eslint).
