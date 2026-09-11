@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   migrateOfflineDatabaseEncryption,
   recoverOfflineLocalReset,
@@ -8,6 +8,8 @@ import {
 } from './offline-local-reset';
 
 describe('offline local reset', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('persists the marker before reloading', async () => {
     const events: string[] = [];
     const markerStore = store({
@@ -306,7 +308,9 @@ describe('offline local reset', () => {
       });
       const sqlite = connection([]);
       const failure = new Error('delete failed');
-      vi.mocked(await sqlite.createConnection('unused', false, 'no-encryption', 1, false)).delete.mockRejectedValueOnce(failure);
+      const database = await sqlite.createConnection('unused', false, 'no-encryption', 1, false);
+      vi.mocked(database.delete).mockRejectedValueOnce(failure);
+      vi.mocked(sqlite.createConnection).mockResolvedValue(database);
       vi.mocked(sqlite.createConnection).mockClear();
 
       await expect(
@@ -321,6 +325,96 @@ describe('offline local reset', () => {
         }),
       ).rejects.toBe(failure);
 
+      expect(markerStore.set).not.toHaveBeenCalled();
+      expect(database.delete).toHaveBeenCalledOnce();
+    });
+
+    it('retries a transient SQLite lock while deleting a legacy database', async () => {
+      const markerStore = store({
+        get: vi.fn(async () => ({ value: null })),
+      });
+      const sqlite = connection([]);
+      const database = await sqlite.createConnection('unused', false, 'no-encryption', 1, false);
+      vi.mocked(database.delete)
+        .mockRejectedValueOnce(new Error('Execute: execute failed rc: 5 message: database is locked'))
+        .mockResolvedValueOnce(undefined);
+      vi.mocked(sqlite.createConnection).mockResolvedValue(database).mockClear();
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler: TimerHandler) => {
+        if (typeof handler === 'function') handler();
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      });
+
+      await expect(
+        migrateOfflineDatabaseEncryption({
+          markerStore,
+          markerKey: 'product:encryption-migration',
+          migrationVersion: 'plaintext-v1',
+          sqliteConnection: sqlite,
+          kitCompatibleDatabaseNames: ['product-offline'],
+          sourceDatabaseEncryption: false,
+          nativePlatform: true,
+        }),
+      ).resolves.toBe(true);
+
+      expect(database.delete).toHaveBeenCalledTimes(2);
+      expect(sqlite.closeConnection).toHaveBeenCalledOnce();
+      expect(markerStore.set).toHaveBeenCalledOnce();
+    });
+
+    it('retries a transient SQLite lock while closing a deleted database', async () => {
+      const markerStore = store({ get: vi.fn(async () => ({ value: null })) });
+      const sqlite = connection([]);
+      vi.mocked(sqlite.closeConnection).mockRejectedValueOnce(new Error('SQLITE_BUSY')).mockResolvedValueOnce(undefined);
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler: TimerHandler) => {
+        if (typeof handler === 'function') handler();
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      });
+
+      await expect(
+        migrateOfflineDatabaseEncryption({
+          markerStore,
+          markerKey: 'product:encryption-migration',
+          migrationVersion: 'plaintext-v1',
+          sqliteConnection: sqlite,
+          kitCompatibleDatabaseNames: ['product-offline'],
+          sourceDatabaseEncryption: false,
+          nativePlatform: true,
+        }),
+      ).resolves.toBe(true);
+
+      expect(sqlite.closeConnection).toHaveBeenCalledTimes(2);
+      expect(markerStore.set).toHaveBeenCalledOnce();
+    });
+
+    it('stops after four transient lock failures and preserves the final error', async () => {
+      const markerStore = store({ get: vi.fn(async () => ({ value: null })) });
+      const sqlite = connection([]);
+      const failures = Array.from({ length: 4 }, (_, index) => new Error(`database is locked ${index + 1}`));
+      const database = await sqlite.createConnection('unused', false, 'no-encryption', 1, false);
+      vi.mocked(database.delete)
+        .mockRejectedValueOnce(failures[0])
+        .mockRejectedValueOnce(failures[1])
+        .mockRejectedValueOnce(failures[2])
+        .mockRejectedValueOnce(failures[3]);
+      vi.mocked(sqlite.createConnection).mockResolvedValue(database).mockClear();
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler: TimerHandler) => {
+        if (typeof handler === 'function') handler();
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      });
+
+      await expect(
+        migrateOfflineDatabaseEncryption({
+          markerStore,
+          markerKey: 'product:encryption-migration',
+          migrationVersion: 'plaintext-v1',
+          sqliteConnection: sqlite,
+          kitCompatibleDatabaseNames: ['product-offline'],
+          sourceDatabaseEncryption: false,
+          nativePlatform: true,
+        }),
+      ).rejects.toBe(failures[3]);
+
+      expect(database.delete).toHaveBeenCalledTimes(4);
       expect(markerStore.set).not.toHaveBeenCalled();
     });
   });
