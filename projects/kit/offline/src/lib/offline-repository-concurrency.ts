@@ -28,6 +28,16 @@ function transientSqliteLockReason(
     if (visited.has(error)) return null;
     visited.add(error);
   }
+  if (error instanceof AggregateError) {
+    if (error.errors.length === 0) return null;
+    let aggregateReason: Extract<OfflineReplicaTransientWriteReason, 'sqlite_busy' | 'sqlite_locked'> | null = null;
+    for (const nested of error.errors) {
+      const reason = transientSqliteLockReason(nested, visited);
+      if (!reason) return null;
+      aggregateReason ??= reason;
+    }
+    return aggregateReason;
+  }
   const code =
     typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
       ? (error as { code: string }).code.toUpperCase()
@@ -44,12 +54,6 @@ function transientSqliteLockReason(
     message.includes('database table is locked')
   ) {
     return 'sqlite_locked';
-  }
-  if (error instanceof AggregateError) {
-    for (const nested of error.errors) {
-      const reason = transientSqliteLockReason(nested, visited);
-      if (reason) return reason;
-    }
   }
   if (error instanceof Error && error.cause !== undefined) {
     return transientSqliteLockReason(error.cause, visited);
