@@ -1,4 +1,6 @@
 import type { PluginListenerHandle } from '@capacitor/core';
+import { HttpClient } from '@angular/common/http';
+import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OfflineNetworkService } from './offline-network.service';
 
@@ -16,16 +18,12 @@ class TestOfflineNetworkService extends OfflineNetworkService {
     return this.getNetworkStatusMock();
   }
 
-  protected override async addAppStateListener(
-    listener: (state: { isActive: boolean }) => void,
-  ): Promise<PluginListenerHandle> {
+  protected override async addAppStateListener(listener: (state: { isActive: boolean }) => void): Promise<PluginListenerHandle> {
     this.appListener = listener;
     return { remove: vi.fn(async () => undefined) };
   }
 
-  protected override async addNetworkStatusListener(
-    listener: (state: { connected: boolean }) => void,
-  ): Promise<PluginListenerHandle> {
+  protected override async addNetworkStatusListener(listener: (state: { connected: boolean }) => void): Promise<PluginListenerHandle> {
     this.networkListener = listener;
     return { remove: vi.fn(async () => undefined) };
   }
@@ -35,7 +33,8 @@ describe('OfflineNetworkService', () => {
   let service: TestOfflineNetworkService;
 
   beforeEach(() => {
-    service = new TestOfflineNetworkService();
+    TestBed.configureTestingModule({ providers: [{ provide: HttpClient, useValue: {} }] });
+    service = TestBed.runInInjectionContext(() => new TestOfflineNetworkService());
     service.getAppStateMock.mockResolvedValue({ isActive: true });
     service.getNetworkStatusMock.mockResolvedValue({ connected: true });
   });
@@ -53,9 +52,7 @@ describe('OfflineNetworkService', () => {
 
   it('listener登録後のappStateChangeを遅延した初期stateで上書きしない', async () => {
     let resolveInitialState!: (state: { isActive: boolean }) => void;
-    service.getAppStateMock.mockImplementation(
-      () => new Promise((resolve) => (resolveInitialState = resolve)),
-    );
+    service.getAppStateMock.mockImplementation(() => new Promise((resolve) => (resolveInitialState = resolve)));
     const initialization = service.initialize();
     await vi.waitFor(() => {
       expect(service.appListener).not.toBeNull();

@@ -28,6 +28,7 @@ import { OfflineReplicaMutationCoordinator } from './offline-replica-mutation-co
 import { OFFLINE_MUTATION_PERSISTENCE_ENABLED } from './offline-mutation-persistence.service';
 import {
   OFFLINE_BYPASS,
+  OFFLINE_IGNORE_TRANSPORT_FAILURE,
   OFFLINE_RESPONSE_HEADER,
   OfflineMutationRequestPolicyRegistry,
   OfflineRequestPolicyRegistry,
@@ -41,7 +42,7 @@ type MaterializedTransport = Notification<HttpEvent<unknown>> & ObservableNotifi
 /** Applies product read and local-first mutation policies while observing real API reachability. */
 export const offlineInterceptor: HttpInterceptorFn = (request, next) => {
   const network = inject(OfflineNetworkService);
-  const transport = () => observeTransport(next(request), network);
+  const transport = () => observeTransport(next(request), network, !request.context.get(OFFLINE_IGNORE_TRANSPORT_FAILURE));
   if (request.context.get(OFFLINE_BYPASS)) return transport();
   if (request.method === 'GET') {
     const registry = inject(OfflineRequestPolicyRegistry);
@@ -270,7 +271,11 @@ function projectReadResponse(
   );
 }
 
-function observeTransport(source: Observable<HttpEvent<unknown>>, network: OfflineNetworkService): Observable<HttpEvent<unknown>> {
+function observeTransport(
+  source: Observable<HttpEvent<unknown>>,
+  network: OfflineNetworkService,
+  observeFailure: boolean,
+): Observable<HttpEvent<unknown>> {
   return source.pipe(
     tap({
       next: (event) => {
@@ -282,7 +287,7 @@ function observeTransport(source: Observable<HttpEvent<unknown>>, network: Offli
         network.markApiSuccess();
       },
       error: (error: unknown) => {
-        if (isOfflineFallbackError(error)) network.markApiFailure();
+        if (observeFailure && isOfflineFallbackError(error)) network.markApiFailure();
       },
     }),
   );

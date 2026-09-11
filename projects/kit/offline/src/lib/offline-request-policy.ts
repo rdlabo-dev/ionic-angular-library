@@ -5,6 +5,8 @@ import { HttpContextToken } from '@angular/common/http';
 
 /** outbox再送時にoffline interceptorだけを迂回する。認証・retryは維持する。 */
 export const OFFLINE_BYPASS = new HttpContextToken<boolean>(() => false);
+/** Lets a manual reachability probe apply its transport failure with its own observation-order guard. */
+export const OFFLINE_IGNORE_TRANSPORT_FAILURE = new HttpContextToken<boolean>(() => false);
 /** Header attached to synthetic local or optimistic responses. */
 export const OFFLINE_RESPONSE_HEADER = 'X-Offline-Response';
 /** Header marking a local response as a complete collection snapshot. */
