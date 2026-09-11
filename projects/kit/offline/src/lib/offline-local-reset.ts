@@ -5,6 +5,7 @@ import {
   COMMUNITY_SQLITE_READONLY,
   COMMUNITY_SQLITE_VERSION,
 } from './offline-community-sqlite-config';
+import { isTransientSqliteLockError } from './offline-repository-concurrency';
 
 /** Durable marker store used to request a cold-start local reset. */
 export interface OfflineLocalResetMarkerStore {
@@ -75,6 +76,7 @@ export interface MigrateOfflineDatabaseEncryptionOptions {
 }
 
 const OFFLINE_LOCAL_RESET_REQUESTED = 'requested';
+const OFFLINE_LOCAL_RESET_RETRY_DELAYS_MS = [50, 150, 300] as const;
 
 /** Persists an explicit destructive reset request, then reloads into a cold bootstrap. */
 export async function requestOfflineLocalReset(options: RequestOfflineLocalResetOptions): Promise<void> {
@@ -171,6 +173,14 @@ async function resolveOfflineDatabaseEncryption(
 type OfflineResetOperationResult = { ok: true } | { ok: false; error: unknown };
 
 async function settleOfflineResetOperation(operation: () => Promise<void>): Promise<OfflineResetOperationResult> {
+  for (const delayMs of OFFLINE_LOCAL_RESET_RETRY_DELAYS_MS) {
+    const result = await new Promise<void>((resolve) => resolve(operation())).then(
+      () => ({ ok: true }) as const,
+      (error: unknown) => ({ ok: false, error }) as const,
+    );
+    if (result.ok || !isTransientSqliteLockError(result.error)) return result;
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
   return new Promise<void>((resolve) => resolve(operation())).then(
     () => ({ ok: true }),
     (error: unknown) => ({ ok: false, error }),
