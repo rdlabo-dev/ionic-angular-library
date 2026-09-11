@@ -21,6 +21,27 @@ describe('offline repository concurrency', () => {
     expect(normalizeOfflineReplicaTransientWriteError(mixed)).toBe(mixed);
   });
 
+  it('classifies an aggregate failure whose branches share one lock cause as transient', () => {
+    const nativeLock = new Error('Execute: execute failed rc: 5 message: database is locked');
+    const aggregate = new AggregateError([
+      new Error('delete failed', { cause: nativeLock }),
+      new Error('close failed', { cause: nativeLock }),
+    ]);
+
+    expect(isTransientSqliteLockError(aggregate)).toBe(true);
+    expect(normalizeOfflineReplicaTransientWriteError(aggregate)).toMatchObject({
+      name: 'OfflineReplicaTransientWriteError',
+      reason: 'sqlite_locked',
+      cause: aggregate,
+    });
+  });
+
+  it('classifies an aggregate failure repeating one lock error as transient', () => {
+    const locked = new Error('SQLITE_BUSY');
+
+    expect(isTransientSqliteLockError(new AggregateError([locked, locked]))).toBe(true);
+  });
+
   it('terminates safely when error causes contain a cycle', () => {
     const cyclic = new Error('outer failure');
     Object.defineProperty(cyclic, 'cause', { value: cyclic });

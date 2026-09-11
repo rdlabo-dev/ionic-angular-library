@@ -32,7 +32,7 @@ function transientSqliteLockReason(
     if (error.errors.length === 0) return null;
     let aggregateReason: Extract<OfflineReplicaTransientWriteReason, 'sqlite_busy' | 'sqlite_locked'> | null = null;
     for (const nested of error.errors) {
-      const reason = transientSqliteLockReason(nested, visited);
+      const reason = transientSqliteLockReason(nested, new Set(visited));
       if (!reason) return null;
       aggregateReason ??= reason;
     }
