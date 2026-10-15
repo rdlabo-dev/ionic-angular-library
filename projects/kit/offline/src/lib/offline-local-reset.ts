@@ -96,7 +96,7 @@ export async function recoverOfflineLocalReset(options: RecoverOfflineLocalReset
   const marker = await options.markerStore.get({ key: options.markerKey });
   if (marker.value !== OFFLINE_LOCAL_RESET_REQUESTED) return false;
 
-  await resetOfflineDatabases({
+  await clearOfflineLocalDatabases({
     sqliteConnection: options.sqliteConnection,
     databaseNames: options.kitCompatibleDatabaseNames,
     databaseEncryption: options.databaseEncryption ?? COMMUNITY_SQLITE_ENCRYPTED,
@@ -118,7 +118,7 @@ export async function migrateOfflineDatabaseEncryption(options: MigrateOfflineDa
   const marker = await options.markerStore.get({ key: options.markerKey });
   if (marker.value === options.migrationVersion) return false;
 
-  await resetOfflineDatabases({
+  await clearOfflineLocalDatabases({
     sqliteConnection: options.sqliteConnection,
     databaseNames: options.kitCompatibleDatabaseNames,
     databaseEncryption: options.sourceDatabaseEncryption,
@@ -134,12 +134,16 @@ export async function migrateOfflineDatabaseEncryption(options: MigrateOfflineDa
   return true;
 }
 
-async function resetOfflineDatabases(options: {
+/** Native databases and product files to remove before recording a completed reset. */
+export interface OfflineLocalDatabaseResetOptions {
   sqliteConnection: OfflineLocalResetSqliteConnection;
   databaseNames: readonly [string, ...string[]];
   databaseEncryption: boolean | 'detect';
   additionalCleanup?: () => Promise<void>;
-}): Promise<void> {
+}
+
+/** Deletes only explicitly configured databases and files; leaves markers and authentication untouched. */
+export async function clearOfflineLocalDatabases(options: OfflineLocalDatabaseResetOptions): Promise<void> {
   await options.sqliteConnection.checkConnectionsConsistency();
   for (const databaseName of new Set(options.databaseNames)) {
     const exists = await options.sqliteConnection.isDatabase(databaseName);

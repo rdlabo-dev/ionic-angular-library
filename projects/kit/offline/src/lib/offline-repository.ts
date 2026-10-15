@@ -348,7 +348,7 @@ export class IonicOfflineRepository implements OfflineRepository {
 
   initialize(): Promise<void> {
     if (!this.#initialization) {
-      this.#initialization = this.#migrate().catch((error: unknown) => {
+      this.#initialization = this.#withStorageLifecycle('exclusive', () => this.#migrate()).catch((error: unknown) => {
         this.#initialization = null;
         throw error;
       });
@@ -564,7 +564,7 @@ export class IonicOfflineRepository implements OfflineRepository {
     await this.#writes;
     this.#beginReaders();
     const read = async (): Promise<T> => operation();
-    return read().finally(() => this.#endReaders());
+    return this.#withStorageLifecycle('shared', read).finally(() => this.#endReaders());
   }
 
   #beginReaders(): void {
@@ -836,7 +836,8 @@ export class IonicOfflineRepository implements OfflineRepository {
         });
         throw error;
       });
-    });
+      // Initialization already holds the lifecycle lock; Web Locks are not reentrant.
+    }, false);
   }
 
   #toWebMigrationRow(row: OfflineReplicaRow): OfflineReplicaWebMigrationRow {
@@ -1059,10 +1060,14 @@ export class IonicOfflineRepository implements OfflineRepository {
     await this.#storage.set(key, mutate(record));
   }
 
-  #enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+  #withStorageLifecycle<T>(mode: 'shared' | 'exclusive', operation: () => Promise<T>): Promise<T> {
+    return this.#options.storageLifecycle ? this.#options.storageLifecycle.run(mode, operation) : operation();
+  }
+
+  #enqueueWrite<T>(operation: () => Promise<T>, guard = true): Promise<T> {
     const write = this.#writes.then(async () => {
       if (this.#activeReaders > 0) await this.#readersIdle;
-      return operation();
+      return guard ? this.#withStorageLifecycle('exclusive', operation) : operation();
     });
     this.#writes = write.then(
       () => undefined,

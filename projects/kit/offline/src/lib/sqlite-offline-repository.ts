@@ -385,7 +385,9 @@ export class SqliteOfflineRepository implements OfflineRepository {
   #resolveAtomicIdle: (() => void) | null = null;
 
   initialize(): Promise<void> {
-    this.#initialization ??= this.#open();
+    this.#initialization ??= this.#options.storageLifecycle
+      ? this.#options.storageLifecycle.run('exclusive', () => this.#open())
+      : this.#open();
     return this.#initialization;
   }
 

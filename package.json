@@ -35,6 +35,7 @@
     "test:watch": "ng test",
     "test:actions": "node --test .github/actions/classify-mobile-release/classify-mobile-release.spec.mjs && vitest run --config .github/actions/vitest.config.mjs",
     "test:offline-types:nonstrict": "npm run prebuild:kit && tsc -p projects/kit/offline/tsconfig.nonstrict-null.json",
+    "test:storage-lifecycle:browser": "node --test tests/offline-storage-lifecycle.browser.test.mjs",
     "test:sqlite": "npm run test:sqlite-concurrency && vitest run --config vitest.sqlite.config.ts",
     "test:sqlite-concurrency": "node --test projects/kit/offline/src/lib/sqlite-concurrency.node.test.mjs",
     "test:package-consumer": "node scripts/test-package-consumer.mjs",

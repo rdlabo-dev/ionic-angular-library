@@ -20,6 +20,8 @@ export * from './lib/offline-auth-bridge';
 export * from './lib/offline-coordinator.service';
 export * from './lib/offline-kit-options';
 export * from './lib/offline-local-reset';
+export * from './lib/offline-storage-lifecycle';
+export * from '@rdlabo/ionic-angular-kit/offline/storage-generation';
 export * from './lib/offline-mutation-envelope';
 export { OfflineMutationPersistenceDisabledError } from './lib/offline-mutation-admission.service';
 export {

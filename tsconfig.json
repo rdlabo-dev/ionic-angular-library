@@ -18,6 +18,7 @@
     "paths": {
       "ionic-theme-ios26": ["./dist/ionic-theme-ios26"],
       "kit": ["./dist/kit"],
+      "@rdlabo/ionic-angular-kit/offline/storage-generation": ["./projects/kit/offline/storage-generation/src/public-api.ts"],
       "@rdlabo/ionic-angular-kit": ["./projects/kit/src/public-api.ts"],
       "@rdlabo/ionic-angular-kit/auth-firebase": ["./projects/kit/auth-firebase/src/public-api.ts"],
       "@rdlabo/ionic-angular-kit/auth-firebase/social": ["./projects/kit/auth-firebase/social/src/public-api.ts"],

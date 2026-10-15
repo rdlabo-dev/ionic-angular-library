@@ -1,3 +1,4 @@
+import type { OfflineStorageLifecycle } from './offline-storage-lifecycle';
 import { InjectionToken, type Type } from '@angular/core';
 import type { OfflineReplicaSchemaBundle } from './offline-replica-schema';
 import type { OfflineStorageUnavailableError } from './offline-storage';
@@ -63,6 +64,8 @@ interface OfflineKitOptionsBase {
    * the replica schema fingerprint for backward compatibility.
    */
   wireProtocol?: OfflineWireProtocolFingerprint;
+  /** Opt-in disposable storage lifecycle. Shared with the product bootstrap before opening a repository. */
+  storageLifecycle?: OfflineStorageLifecycle;
   /** Optional durable Outbox backpressure policy. */
   outboxLimits?: OfflineOutboxLimits;
   /**

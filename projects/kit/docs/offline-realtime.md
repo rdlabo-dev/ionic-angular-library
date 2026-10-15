@@ -221,3 +221,50 @@ credential exchange is still pending.
 Subclass `KitRealtimeConnection` to supply connection intent and `{ url, protocols }` targets. The kit owns foreground and network suspension, target-scoped reconnect, exponential backoff, ping/pong detection, self-echo annotation, and `reconnected$` resync signaling.
 
 Use `kitRealtimeProtocols()` to carry authentication and the stable `KIT_REALTIME_CLIENT_ID` in WebSocket subprotocols instead of URL parameters. Offline-capable authenticated clients set `requireRemoteAccess: true`; sockets then remain closed in `none` and `local` modes.
+
+## Disposable storage generations
+
+`OfflineStorageLifecycle` is an explicit alternative to retaining incremental local data migrations.
+It does not change the wire protocol and never resets storage in response to a generic error.
+Products must opt in with `discardPendingCommands: true`: the entire configured replica, cursors,
+local snapshots and unsent Outbox are disposable. Authentication and unrelated preferences remain
+outside the cleanup targets. Repopulation requires connectivity.
+
+Create one lifecycle instance for bootstrap and pass that same instance as `storageLifecycle` to
+`provideOffline` / `provideRouteScopedOffline`. Await `prepare()` before constructing product
+services that open the database. Kit also gates repository initialization through this instance.
+`reload-required` is not permission to open the repository: render the product's reset/update UI,
+call `requestRebuildAfterBootstrap(waitUntilReady, location)`, and resume only after a cold restart.
+The `beforeCleanup` hook can acknowledge Live Update readiness before slow native file deletion.
+Kit does not depend on the Live Update plugin or supply product messages/navigation.
+
+The lightweight `@rdlabo/ionic-angular-kit/offline/storage-generation` entry point exports
+`inspectOfflineStorageGeneration` for startup guards without eagerly loading the offline runtime.
+Generation values and marker keys are product-owned. SeatKeep keeps its
+`OFFLINE_SCHEMA_VERSION:schemaHash` identity; Winecode keeps generation `4` and its existing keys.
+Matching markers are accepted without deleting data or forcing a migration-only reset. Local
+schema changes must change the configured generation; they must not change `wireProtocol` unless
+the server contract itself is incompatible. Retaining an explicit numeric generation requires the
+product to bump it when its local storage shape changes.
+
+Native targets list only databases compatible with the existing reset connection lifecycle;
+`additionalCleanup` owns other databases/media files. A pending reset survives deletion failure,
+completion-marker failure, and interrupted cleanup. Completion is recorded only after all cleanup
+succeeds. Deferred mode can adopt a fresh installation without reloading when no target DB exists.
+Existing manual reset and encryption-migration APIs remain available and retain their behavior.
+
+Web targets require Web Locks (secure context). All cooperating runtimes use one origin-wide lock
+for the existing `offline:` namespace: preparation and writes are exclusive, reads are shared.
+The repository validates the generation and a reset revision within the lock. A stale runtime throws
+`OfflineStorageGenerationChangedError` before touching rebuilt data, including after a manual reset
+of the same generation. The product should reload that runtime. Absence of Web Locks fails before
+any deletion; there is no unsafe per-tab fallback. Already shipped clients without this protocol
+cannot be fenced by the new library; replacing/reloading old tabs is necessary during rollout.
+
+Validation commands:
+
+- `npm test -- --project kit --include='../offline/src/lib/offline-storage-lifecycle.spec.ts'`
+- `npm run test:storage-lifecycle:browser` (headless Chromium, two pages of the same origin)
+
+The browser test runs the actual lifecycle with Web Locks and a small localStorage adapter. Repository
+integration tests separately cover the KitStorageService boundary and stale repository reads/writes.
