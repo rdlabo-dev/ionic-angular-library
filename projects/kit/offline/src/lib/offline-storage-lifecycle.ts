@@ -88,12 +88,12 @@ export class OfflineStorageLifecycle {
     reloadTarget: OfflineLocalResetReloadTarget,
   ): Promise<boolean> {
     const state = await inspectOfflineStorageGeneration(this.options);
-    if (state.matches || state.requested) return false;
+    if (state.matches && !state.requested) return false;
     await waitUntilReady();
     const requested = await this.#lock('exclusive', async () => {
       const current = await inspectOfflineStorageGeneration(this.options);
-      if (current.matches || current.requested) return false;
-      await this.options.markerStore.set({ key: this.options.markerKey, value: 'requested' });
+      if (current.matches && !current.requested) return false;
+      if (!current.requested) await this.options.markerStore.set({ key: this.options.markerKey, value: 'requested' });
       return true;
     });
     if (requested) reloadTarget.reload();
@@ -114,7 +114,15 @@ export class OfflineStorageLifecycle {
     }
     if (!state.requested && options.rebuild === 'after-reload') {
       if (await this.#hasStorage()) return 'reload-required';
+      // Database absence does not imply product-owned media is absent as well.
+      const cleanup = options.target.kind === 'sqlite' ? options.target.additionalCleanup : undefined;
+      if (cleanup) {
+        await options.beforeCleanup?.();
+        await options.markerStore.set({ key: options.markerKey, value: 'requested' });
+        await cleanup();
+      }
       await options.markerStore.set({ key: options.generationKey, value: state.generation });
+      if (cleanup) await options.markerStore.remove({ key: options.markerKey });
       this.#revision = (await options.markerStore.get({ key: this.#revisionKey })).value;
       return 'ready';
     }
@@ -143,7 +151,7 @@ export class OfflineStorageLifecycle {
     return databases.some(({ result }) => result === true);
   }
 
-  #lock<T>(mode: 'shared' | 'exclusive', operation: () => Promise<T>): Promise<T> {
+  async #lock<T>(mode: 'shared' | 'exclusive', operation: () => Promise<T>): Promise<T> {
     if (this.options.target.kind === 'sqlite') {
       let operations = nativeOperations.get(this.options.markerStore);
       if (!operations) {
@@ -166,6 +174,6 @@ export class OfflineStorageLifecycle {
     const locks = this.options.target.locks ?? globalThis.navigator?.locks;
     if (!locks) return Promise.reject(new Error('Web Locks are required to safely rebuild shared offline storage.'));
     // One origin-wide lock matches the existing shared `offline:` namespace, even across products.
-    return locks.request('kit:offline:storage', { mode }, operation);
+    return await locks.request('kit:offline:storage', { mode }, operation);
   }
 }

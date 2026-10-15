@@ -60,6 +60,51 @@ function fixture() {
 }
 
 describe('disposable storage lifecycle', () => {
+  it('retries a failed cold reload even when the reset intent is already persisted', async () => {
+    const f = fixture();
+    const lifecycle = f.lifecycle();
+    const ready = vi.fn(async () => undefined);
+    const reload = vi.fn().mockImplementationOnce(() => {
+      throw new Error('reload failed');
+    });
+    await expect(lifecycle.requestRebuildAfterBootstrap(ready, { reload })).rejects.toThrow('reload failed');
+    expect(f.markers.get('reset')).toBe('requested');
+    expect(await lifecycle.requestRebuildAfterBootstrap(ready, { reload })).toBe(true);
+    expect(ready).toHaveBeenCalledTimes(2);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it('cleans orphaned product files without a database and retries failure before completing adoption', async () => {
+    const f = fixture();
+    const cleanup = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('files locked'));
+    const ready = vi.fn(async () => undefined);
+    const lifecycle = new OfflineStorageLifecycle({
+      ...f.options,
+      rebuild: 'after-reload',
+      beforeCleanup: ready,
+      target: {
+        kind: 'sqlite',
+        databaseNames: ['replica'],
+        databaseEncryption: false,
+        additionalCleanup: cleanup,
+        sqliteConnection: {
+          checkConnectionsConsistency: vi.fn(async () => ({})),
+          isDatabase: vi.fn(async () => ({ result: false })),
+          createConnection: vi.fn(),
+          closeConnection: vi.fn(),
+        },
+      },
+    });
+    await expect(lifecycle.prepare()).rejects.toThrow('files locked');
+    expect(f.markers.get('reset')).toBe('requested');
+    expect(f.markers.has('generation')).toBe(false);
+    expect(ready.mock.invocationCallOrder[0]).toBeLessThan(cleanup.mock.invocationCallOrder[0]!);
+    expect(await lifecycle.prepare()).toBe('rebuilt');
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(f.markers.get('generation')).toBe('current');
+    expect(f.markers.has('reset')).toBe(false);
+  });
+
   it('adopts an existing matching marker without discarding pending commands or authentication', async () => {
     const f = fixture();
     f.markers.set('generation', 'current');
