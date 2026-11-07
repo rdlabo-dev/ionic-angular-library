@@ -37,16 +37,8 @@ provideKitAuth(() => {
 });
 
 export const routes: Routes = [
-  {
-    path: 'auth/signin',
-    canActivate: [kitRequiredUnauthorizedGuard],
-    loadComponent: () => import('./signin.page').then((m) => m.SigninPage),
-  },
-  {
-    path: 'auth/confirm',
-    canActivate: [kitRequireConfirmingGuard],
-    loadComponent: () => import('./confirm.page').then((m) => m.ConfirmPage),
-  },
+  { path: 'auth/signin', canActivate: [kitRequiredUnauthorizedGuard], loadComponent: () => import('./signin.page').then((m) => m.SigninPage) },
+  { path: 'auth/confirm', canActivate: [kitRequireConfirmingGuard], loadComponent: () => import('./confirm.page').then((m) => m.ConfirmPage) },
   { path: 'home', canActivate: [kitRequireAuthorizedGuard], loadComponent: () => import('./home.page').then((m) => m.HomePage) },
 ];
 ```
