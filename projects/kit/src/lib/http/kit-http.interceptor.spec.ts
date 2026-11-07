@@ -5,7 +5,13 @@ import { Observable } from 'rxjs';
 import { of, throwError } from 'rxjs';
 import { firstValueFrom } from 'rxjs';
 
-import { KIT_AUTH_BOOTSTRAP_REQUEST, kitAuthInterceptor, provideKitHttp, type KitHttpConfig } from './kit-http.interceptor';
+import {
+  KIT_SKIP_ERROR_NOTIFICATIONS,
+  KIT_AUTH_BOOTSTRAP_REQUEST,
+  kitAuthInterceptor,
+  provideKitHttp,
+  type KitHttpConfig,
+} from './kit-http.interceptor';
 import { KitAuthAccessService } from '../auth/auth-access.service';
 import { isIdentityAuthFailure } from './auth-failure';
 
@@ -60,6 +66,54 @@ describe('kitAuthInterceptor', () => {
   afterEach(() => {
     vi.useRealTimers();
     TestBed.resetTestingModule();
+  });
+
+  it.each([false, true])('409 preserves the error and only notifies when suppression is %s', async (skip) => {
+    const config = makeConfig();
+    setupInterceptor(config);
+    const req = baseReq.clone({ context: new HttpContext().set(KIT_SKIP_ERROR_NOTIFICATIONS, skip) });
+    const error = new HttpErrorResponse({ status: 409, error: { message: 'Already applied' } });
+    const next = vi.fn(() => throwError(() => error));
+    await expect(firstValueFrom(runInterceptor(req, next))).rejects.toBe(error);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(config.onServerError).toHaveBeenCalledTimes(skip ? 0 : 1);
+    if (!skip) expect(config.onServerError).toHaveBeenCalledWith('Already applied');
+  });
+
+  it.each([401, 403, 0, 429, 503, 502, 400, 422, 500])('suppresses notification hooks for %s and preserves rejection', async (status) => {
+    const config = makeConfig({ onRateLimited: vi.fn(), onMaintenance: vi.fn(), onServerBusy: vi.fn() });
+    setupInterceptor(config);
+    const req = new HttpRequest('POST', '/api/test', {}, { context: new HttpContext().set(KIT_SKIP_ERROR_NOTIFICATIONS, true) });
+    const error = new HttpErrorResponse({ status, error: { message: 'Failure' } });
+    await expect(firstValueFrom(runInterceptor(req, () => throwError(() => error)))).rejects.toBe(error);
+    for (const hook of [
+      config.onUnauthorized,
+      config.onForbidden,
+      config.onNetworkError,
+      config.onRateLimited,
+      config.onMaintenance,
+      config.onServerBusy,
+      config.onServerError,
+    ]) {
+      expect(hook).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps 401 recovery and authenticated replay when notifications are suppressed', async () => {
+    const config = makeConfig({ recoverAuthAccess: vi.fn().mockResolvedValue(true) });
+    setupInterceptor(config);
+    const req = baseReq.clone({ context: new HttpContext().set(KIT_SKIP_ERROR_NOTIFICATIONS, true) });
+    const error = new HttpErrorResponse({ status: 401 });
+    const response = new HttpResponse({ body: 'recovered' });
+    const next = vi
+      .fn()
+      .mockReturnValueOnce(throwError(() => error))
+      .mockReturnValueOnce(of(response));
+    await expect(firstValueFrom(runInterceptor(req, next))).resolves.toBe(response);
+    expect(config.recoverAuthAccess).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledTimes(2);
+    expect(config.getAuthHeaders).toHaveBeenCalledTimes(2);
+    expect(config.onUnauthorized).not.toHaveBeenCalled();
   });
 
   // Every hook except getAuthHeaders is optional; a config that only provides
