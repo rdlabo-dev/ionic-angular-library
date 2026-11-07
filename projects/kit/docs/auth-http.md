@@ -93,3 +93,24 @@ export const appConfig: ApplicationConfig = {
 Automatic retry is limited to `GET`, `HEAD`, `OPTIONS`, or requests carrying an `Idempotency-Key`. Ordinary writes are never retried automatically. Retries cover transient statuses `0`, `408`, `429`, `502`, `503`, and `504`, and honor `Retry-After`.
 
 When offline support is enabled, register `offlineInterceptor` before `kitAuthInterceptor`. Local mode then prevents credential generation and network transport while allowing a matched read policy to serve the scoped replica.
+
+### Request-owned error notifications
+
+`onServerError` receives the server body message for HTTP 400, 409, 422, and 500.
+For requests whose caller displays its own error UI, set the public boolean context token
+`KIT_SKIP_ERROR_NOTIFICATIONS` (default `false`):
+
+```ts
+import { HttpContext } from '@angular/common/http';
+import { KIT_SKIP_ERROR_NOTIFICATIONS } from '@rdlabo/ionic-angular-kit';
+
+http.post('/applications', payload, {
+  context: new HttpContext().set(KIT_SKIP_ERROR_NOTIFICATIONS, true),
+});
+```
+
+This suppresses only response-error notification hooks: `onUnauthorized`, `onForbidden`,
+`onNetworkError`, `onRateLimited`, `onMaintenance`, `onServerBusy`, and `onServerError`.
+The original error still rejects to the caller. It does not bypass authentication, stop
+401 recovery/replay, change retry or offline-fallback behavior, prevent access revocation
+(`onAuthAccessDenial`), or suppress auth-header failures (`onAuthError`).

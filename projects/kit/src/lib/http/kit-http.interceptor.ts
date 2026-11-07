@@ -21,6 +21,13 @@ import { isExplicitAuthDenial, KitAuthAccessService } from '../auth/auth-access.
 export const KIT_AUTH_BOOTSTRAP_REQUEST = new HttpContextToken<boolean>(() => false);
 
 /**
+ * Suppresses response-error notification hooks for requests whose caller owns the error UI.
+ * Defaults to false. Errors still propagate unchanged; authentication recovery/replay,
+ * access revocation, auth-header failure hooks, retries, and offline fallback remain active.
+ */
+export const KIT_SKIP_ERROR_NOTIFICATIONS = new HttpContextToken<boolean>(() => false);
+
+/**
  * Marks an auth-recovery replay so {@link KitHttpConfig.recoverAuthAccess} is not invoked again.
  *
  * @internal
@@ -258,7 +265,7 @@ export interface KitHttpConfig {
    */
   onRateLimited?(retryAfterSeconds?: number): void;
   /**
-   * UX hook for `400` / `422` / `500` responses that carry a server-provided message.
+   * UX hook for `400` / `409` / `422` / `500` responses that carry a server-provided message.
    *
    * @remarks
    * Optional; defaults to a no-op. Note that the message comes straight from the API; prefer a
@@ -446,6 +453,8 @@ const handleTransportError = (
  * @internal
  */
 const dispatchError = (config: KitHttpConfig, req: HttpRequest<unknown>, error: HttpErrorResponse): void => {
+  if (req.context.get(KIT_SKIP_ERROR_NOTIFICATIONS)) return;
+
   const status = error.status;
   const retryAfterMs = parseRetryAfterMs(error);
   const retryAfterSeconds = retryAfterMs === null ? undefined : Math.round(retryAfterMs / 1000);
@@ -468,7 +477,7 @@ const dispatchError = (config: KitHttpConfig, req: HttpRequest<unknown>, error: 
     config.onMaintenance?.();
   } else if ([502, 503, 504].includes(status)) {
     config.onServerBusy?.(status, retryAfterSeconds);
-  } else if ([400, 422, 500].includes(status) && error.error?.message) {
+  } else if ([400, 409, 422, 500].includes(status) && error.error?.message) {
     config.onServerError?.(error.error.message);
   }
   // Every other status (404, 418, …) is left to the caller — no generic alert.
@@ -494,7 +503,7 @@ const dispatchError = (config: KitHttpConfig, req: HttpRequest<unknown>, error: 
  *    For every other error, `offlineFallback` is consulted first; otherwise the error is classified by
  *    status (see {@link dispatchError}): `401`→`onUnauthorized`, `403`→`onForbidden`, `0`→
  *    `onNetworkError` (when connected), `429`→`onRateLimited`, maintenance `503`→`onMaintenance`,
- *    other `502`/`503`/`504`→`onServerBusy`, and `400`/`422`/`500` with a body message→`onServerError`.
+ *    other `502`/`503`/`504`→`onServerBusy`, and `400`/`409`/`422`/`500` with a body message→`onServerError`.
  *
  * @param request - The outgoing request.
  * @param next - The next handler in the interceptor chain.
