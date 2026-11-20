@@ -36,7 +36,7 @@ export function selectPreviousTag(tags, { currentTag, currentMatch, containsAppP
   return tags
     .filter((candidate) => candidate !== `v${currentTag}`)
     .map((candidate) => ({ candidate, match: parseReleaseTag(candidate) }))
-    .filter(({ match }) => match && compareRelease(match, currentMatch) < 0)
+    .filter(({ match }) => match && compareRelease(match, currentMatch) < 0 && (currentMatch[4] !== undefined || match[4] === undefined))
     .filter(({ candidate }) => containsAppPackage(candidate))
     .sort((left, right) => compareRelease(right.match, left.match))[0]?.candidate;
 }
@@ -120,6 +120,15 @@ export function classifyRelease({
   return 'live-update';
 }
 
+/** Requires a store build number greater than every prior native handoff in its release train. */
+export function assertUnusedStoreBuild(buildNumber, handoffs) {
+  for (const { tag, buildNumber: previousBuild } of handoffs) {
+    if (Number(buildNumber) <= Number(previousBuild)) {
+      throw new Error(`Store build ${buildNumber} must exceed ${previousBuild} already handed off by ${tag}.`);
+    }
+  }
+}
+
 export function buildOutputLines(releaseKind, version, buildNumber) {
   return [
     `release_kind=${releaseKind}`,
@@ -196,6 +205,25 @@ export function main({ argv = process.argv.slice(2), env = process.env } = {}) {
     nativeFilesChanged,
     nativeDependencyChanges,
   });
+  if (releaseKind === 'store' && tagMatch[4] === undefined) {
+    const [, major, minor] = tagMatch;
+    // The release baseline ignores prereleases, but a handoff in this train
+    // can still have consumed a build number.
+    const handoffTags = execFileSync('git', ['tag', '--list', `capawesome/v${major}.${minor}.*-*`], {
+      encoding: 'utf8',
+    }).trim();
+    const handoffs = handoffTags ? handoffTags.split('\n') : [];
+    assertUnusedStoreBuild(
+      native.buildNumber,
+      handoffs.map((tag) => ({
+        tag,
+        buildNumber: readNativeVersions(
+          gitShow(`${appPath}/android/app/build.gradle`, tag),
+          gitShow(`${appPath}/ios/App/App.xcodeproj/project.pbxproj`, tag),
+        ).buildNumber,
+      })),
+    );
+  }
   const lines = buildOutputLines(releaseKind, version, native.buildNumber);
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
   console.log(`Classified v${version} as ${releaseKind} for native ${native.marketingVersion} (${native.buildNumber}).`);

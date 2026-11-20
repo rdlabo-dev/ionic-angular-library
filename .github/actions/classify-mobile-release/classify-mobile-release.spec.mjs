@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   assertBuildEncodesVersion,
+  assertUnusedStoreBuild,
   buildOutputLines,
   classifyRelease,
   compareRelease,
@@ -72,6 +73,35 @@ describe('previous release selection', () => {
         containsAppPackage: (tag) => tag !== 'v9.0.1-1',
       }),
       'v9.0.0',
+    );
+  });
+
+  it('uses the previous stable release for a stable promotion', () => {
+    const tags = ['v9.0.0', 'v9.1.0-1'];
+    const previousTag = selectPreviousTag(tags, {
+      currentTag: '9.1.0',
+      currentMatch: match('9.1.0'),
+      containsAppPackage: () => true,
+    });
+    assert.equal(previousTag, 'v9.0.0');
+    assert.equal(
+      classifyRelease(
+        classification({
+          tagMatch: match('9.1.0'),
+          native: { marketingVersion: '9.1.0', buildNumber: '9010000' },
+          previousTag,
+          previousMatch: parseReleaseTag(previousTag),
+        }),
+      ),
+      'store',
+    );
+    assert.equal(
+      selectPreviousTag(tags, {
+        currentTag: '9.1.0-2',
+        currentMatch: match('9.1.0-2'),
+        containsAppPackage: () => true,
+      }),
+      'v9.1.0-1',
     );
   });
 
@@ -249,6 +279,18 @@ describe('release classification', () => {
         ),
       /not compatible/,
     );
+  });
+});
+
+describe('native handoff build numbers', () => {
+  it('requires a store build above every prior handoff in its release train', () => {
+    const handoffs = [
+      { tag: 'capawesome/v9.1.0-1', buildNumber: '9010001' },
+      { tag: 'capawesome/v9.1.0-2', buildNumber: '9010002' },
+    ];
+    assert.throws(() => assertUnusedStoreBuild('9010002', handoffs), /already handed off by capawesome\/v9\.1\.0-2/);
+    assert.throws(() => assertUnusedStoreBuild('9010000', handoffs), /must exceed 9010001/);
+    assert.doesNotThrow(() => assertUnusedStoreBuild('9010003', handoffs));
   });
 });
 
