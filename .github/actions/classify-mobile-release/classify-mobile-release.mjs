@@ -120,6 +120,7 @@ export function classifyRelease({
   return 'live-update';
 }
 
+/** Requires a store build number greater than every prior native handoff in its release train. */
 export function assertUnusedStoreBuild(buildNumber, handoffs) {
   for (const { tag, buildNumber: previousBuild } of handoffs) {
     if (Number(buildNumber) <= Number(previousBuild)) {
