@@ -4330,7 +4330,7 @@ describe('OfflineSyncService', () => {
       },
       { flush: false },
     );
-    TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = ({ payload }) => ({ payload, readOnly: true });
+    TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = () => ({ payload: { revision: 2 }, readOnly: true });
     execute.mockRejectedValueOnce({ status: 503 }).mockRejectedValueOnce({ status: 409 });
     connected.set(true);
     await service.flush();
@@ -4339,6 +4339,7 @@ describe('OfflineSyncService', () => {
     expect(commands).toHaveLength(1);
 
     await service.retryNow(commandId);
+    expect(execute.mock.calls.map(([command]) => command.payload)).toEqual([{ revision: 1 }, { revision: 1 }]);
     expect(commands[0]).toMatchObject({ commandId, state: 'conflict', lastErrorCode: 'receipt_conflict', serverCommitUnknown: true });
     await expect(service.discard(commandId)).rejects.toBeInstanceOf(OfflineCommandInFlightError);
     await service.discard(commandId, { acceptServerVersion: true });
@@ -4568,6 +4569,25 @@ describe('OfflineSyncService', () => {
     await service.flush();
     expect(execute).toHaveBeenCalledOnce();
     expectAwaitingPull(1);
+  });
+
+  it('rejects a non-JSON prepared intent before transport or persistence', async () => {
+    const commandId = await service.enqueue(
+      {
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'invalid-prepare' },
+        operation: 'documents.upsert',
+        payload: { valid: true },
+      },
+      { flush: false },
+    );
+    TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = () => ({ payload: { invalid: Infinity } });
+    connected.set(true);
+    await expect(service.flush()).rejects.toBeInstanceOf(OfflinePayloadValidationError);
+    expect(commands[0]).toMatchObject({ commandId, state: 'rejected', payload: { valid: true }, serverCommitUnknown: false });
+    expect(rows[0]?.syncState).toBe('rejected');
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it.each(['row lookup', 'prepareTransport'])('restores the retryable command when %s fails before sending', async (step) => {

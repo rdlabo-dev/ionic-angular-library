@@ -865,6 +865,7 @@ describe('IonicOfflineRepository', () => {
       explicitSafe: { ...base, commandId: 'new-pretransport', state: 'retry_wait', serverCommitUnknown: false },
     });
 
+    TestBed.inject(OFFLINE_KIT_OPTIONS).recoverStoredCommand = (command) => ({ ...command, payload: { version: 2 } });
     const restored = await repository.getCommands({ userId: 1, scopeId: '10' });
     expect(restored).toEqual(
       expect.arrayContaining([
@@ -872,7 +873,7 @@ describe('IonicOfflineRepository', () => {
         expect.objectContaining({ commandId: 'legacy-retry', serverCommitUnknown: true }),
         expect.objectContaining({ commandId: 'legacy-conflict', serverCommitUnknown: true }),
         expect.objectContaining({ commandId: 'legacy-rejected', serverCommitUnknown: true }),
-        expect.objectContaining({ commandId: 'legacy-timeout', state: 'retry_wait', serverCommitUnknown: true }),
+        expect.objectContaining({ commandId: 'legacy-timeout', state: 'retry_wait', serverCommitUnknown: true, payload: { version: 2 } }),
         expect.objectContaining({ commandId: 'new-pretransport', serverCommitUnknown: false }),
       ]),
     );

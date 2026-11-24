@@ -2,7 +2,9 @@
 import { TestBed } from '@angular/core/testing';
 import { KitStorageService } from '@rdlabo/ionic-angular-kit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { OFFLINE_COMMAND_EXECUTOR } from './offline-command-executor';
+import { OfflineSyncService, OfflineCommandInFlightError } from './offline-sync.service';
+import { OfflineNetworkService } from './offline-network.service';
+import { OFFLINE_COMMAND_EXECUTOR, OFFLINE_SYNC_CONTEXT } from './offline-command-executor';
 import { OFFLINE_COMMAND_HOOKS } from './offline-command-hooks';
 import { OFFLINE_KIT_OPTIONS } from './offline-kit-options';
 import {
@@ -150,6 +152,8 @@ describe('OfflineReplicaPullService', () => {
     TestBed.configureTestingModule({
       providers: [
         OfflineReplicaPullService,
+        { provide: OfflineNetworkService, useValue: { connected: () => false } },
+        { provide: OFFLINE_SYNC_CONTEXT, useValue: { getSession: async () => ({ userId: scope.userId, scopes: [scope] }) } },
         IonicOfflineRepository,
         { provide: KitStorageService, useValue: storage },
         { provide: OFFLINE_KIT_OPTIONS, useValue: { databaseName: 'test-offline', databaseEncryption: false, replicaSchema, mode } },
@@ -1932,6 +1936,19 @@ describe('OfflineReplicaPullService', () => {
       syncState: 'conflict',
     });
 
+    // The existing conflict blocks FIFO delivery but does not change the outcome of another command.
+    const [head] = await repository.getCommands(scope);
+    const waiting: OfflineCommand = {
+      ...head!,
+      commandId: 'waiting',
+      createdAt: head!.createdAt + 1,
+      state: 'pending',
+      lastErrorCode: null,
+      serverCommitUnknown: true,
+    };
+    await repository.transactReplica({
+      putCommands: [{ ...head!, lastErrorCode: 'receipt_conflict', serverCommitUnknown: true }, waiting],
+    });
     projector.project.mockResolvedValueOnce({
       putRows: [
         {
@@ -1956,6 +1973,13 @@ describe('OfflineReplicaPullService', () => {
       serverRevision: 3,
       syncState: 'conflict',
     });
+    const sync = TestBed.inject(OfflineSyncService);
+    await sync.discard(waiting.commandId, { acceptServerVersion: true });
+    await expect(sync.discard(waiting.commandId)).rejects.toBeInstanceOf(OfflineCommandInFlightError);
+    await expect(repository.getCommands(scope)).resolves.toEqual([
+      expect.objectContaining({ commandId: head!.commandId, lastErrorCode: 'receipt_conflict' }),
+      expect.objectContaining({ commandId: waiting.commandId, state: 'pending', lastErrorCode: null, serverCommitUnknown: true }),
+    ]);
     await expect(repository.getReplicaRow(scope, 'test_views', { kind: 'local', localId: 'view-sensitive' })).resolves.toMatchObject({
       values: { title: 'Optimistic derived' },
       confirmedValues: { title: 'Newer remote derived' },

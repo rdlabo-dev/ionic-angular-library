@@ -1,3 +1,4 @@
+import { RECEIPT_CONFLICT } from './offline-command-recovery';
 import { inject, Injectable } from '@angular/core';
 import { isOfflineAggregateIntentConflict, offlineAggregateIntentMutations } from './offline-aggregate-intent-projector';
 import { OFFLINE_COMMAND_HOOKS } from './offline-command-hooks';
@@ -514,13 +515,13 @@ export class OfflineReplicaPullService {
     const removed = new Set(currentRows.removeRows.map((row) => this.#rowKey(row)));
     for (const [key, seed] of affected) {
       const remainingForAggregate = remaining.filter((command) => this.#aggregateKey(command) === key);
-      const existingConflict = remainingForAggregate.find((command) => command.state === 'conflict');
+      const hasConflict = remainingForAggregate.some((command) => command.state === 'conflict');
       const footprintCommands = [...remainingForAggregate, seed];
       const baseRow = await this.#overlayBaseRow(seed, overlay, removed);
       const persistedLocalOnlyRows = await this.#persistedLocalOnlyRows(footprintCommands);
       const localOnlyRows = await this.#overlayLocalOnlyRows(footprintCommands, overlay, removed);
-      const projection = existingConflict
-        ? { kind: 'conflict' as const, reason: existingConflict.lastErrorCode ?? 'remote_revision' }
+      const projection = hasConflict
+        ? null
         : this.#replicaMutations.projectAggregateIntent({
             baseRow,
             localOnlyRows,
@@ -528,16 +529,16 @@ export class OfflineReplicaPullService {
             trigger: 'pull',
             incomingRevision: baseRow?.serverRevision ?? undefined,
           });
-      if (isOfflineAggregateIntentConflict(projection)) {
+      if (projection === null || isOfflineAggregateIntentConflict(projection)) {
         if (!baseRow) throw new Error('Offline aggregate conflict requires an authoritative base row.');
         putRows.push({ ...baseRow, values: baseRow.values, syncState: 'conflict' });
-        for (const command of remainingForAggregate) {
-          putCommands.set(command.commandId, {
-            ...command,
-            state: 'conflict',
-            retryAt: null,
-            lastErrorCode: projection.reason,
-          });
+        // An existing command conflict blocks the aggregate view. Only a new projection conflict
+        // applies to every remaining intent; a projector cannot attest to a command's delivery.
+        if (projection) {
+          const reason = projection.reason === RECEIPT_CONFLICT ? 'remote_revision' : projection.reason;
+          for (const command of remainingForAggregate) {
+            putCommands.set(command.commandId, { ...command, state: 'conflict', retryAt: null, lastErrorCode: reason });
+          }
         }
         const incomingByKey = new Map(localOnlyRows.map((row) => [this.#rowKey(row), row] as const));
         for (const previous of persistedLocalOnlyRows) {

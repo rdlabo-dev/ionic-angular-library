@@ -1,3 +1,4 @@
+import { RECEIPT_CONFLICT } from './offline-command-recovery';
 import { HttpErrorResponse } from '@angular/common/http';
 import { isWriteOutcomeUnknown, parseRetryAfterMs } from '@rdlabo/ionic-angular-kit';
 import { computed, effect, ErrorHandler, inject, Injectable, InjectionToken, signal, untracked } from '@angular/core';
@@ -106,6 +107,8 @@ interface MaterializedOfflineEnqueue {
 
 /** Raised before persistence when an outbox payload is not losslessly JSON serializable. */
 export class OfflinePayloadValidationError extends Error {
+  readonly status = 422;
+
   constructor(message = 'Offline command payload must contain only JSON values') {
     super(message);
     this.name = 'OfflinePayloadValidationError';
@@ -879,7 +882,7 @@ export class OfflineSyncService {
       const current = (await this.#readKnownCommands(repository)).find((item) => item.commandId === commandId);
       if (!current) return null;
       if (options.acceptServerVersion) {
-        if (current.state !== 'conflict' || current.lastErrorCode !== 'receipt_conflict') return null;
+        if (current.state !== 'conflict' || current.lastErrorCode !== RECEIPT_CONFLICT) return null;
       } else {
         this.#assertDiscardable([current]);
       }
@@ -1445,19 +1448,20 @@ export class OfflineSyncService {
     if (!this.#isCurrent(generation)) return false;
     const claimedCommand = sending;
     const priorCommitUnknown = claimedCommand.serverCommitUnknown === true;
+    let preparedRow: OfflineReplicaRow | null = null;
     const prepare = async () => {
-      const row = await this.#rowForCommand(claimedCommand);
-      if (!row)
+      preparedRow = await this.#rowForCommand(claimedCommand);
+      if (!preparedRow)
         throw new Error(
           `Offline replica row not found: ${claimedCommand.aggregateType}/${canonicalOfflineCommandIdentity(claimedCommand.identity)}`,
         );
       const transport = this.#executor.prepareTransport?.(claimedCommand);
       const transportCommand = await this.#markTransportStarted(claimedCommand, generation, transport);
-      return { row, transport, transportCommand };
+      return { row: preparedRow, transport, transportCommand };
     };
     const preparation = await prepare().catch(async (error: unknown) => {
       if (!this.#isCurrent(generation)) return null;
-      await this.#persistFailedCommand(claimedCommand, error, generation, null, priorCommitUnknown);
+      await this.#persistFailedCommand(claimedCommand, error, generation, preparedRow, priorCommitUnknown);
       throw error;
     });
     if (!preparation) return false;
@@ -1749,7 +1753,7 @@ export class OfflineSyncService {
       return { ...command, state: 'blocked_auth', lastErrorCode: String(status), serverCommitUnknown };
     }
     if (status === 409 || status === 412) {
-      const lastErrorCode = readOnly && status === 409 ? 'receipt_conflict' : String(status);
+      const lastErrorCode = readOnly && status === 409 ? RECEIPT_CONFLICT : String(status);
       const conflict: OfflineCommand = { ...command, state: 'conflict', lastErrorCode, serverCommitUnknown };
       const recovered = this.#options.recoverStoredCommand?.(conflict) ?? conflict;
       return recovered.state === 'retry_wait' && recovered.retryAt === null ? { ...recovered, retryAt: Date.now() } : recovered;
@@ -2091,9 +2095,12 @@ export class OfflineSyncService {
       const scope = { userId: command.userId, scopeId: command.scopeId };
       const current = (await repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
       if (!current || current.state !== 'sending') return null;
+      // A possibly delivered write must reuse the durable intent associated with its key.
+      const payload = transport && !current.serverCommitUnknown ? transport.payload : current.payload;
+      if (transport) assertOfflinePayload(payload);
       const transportCommand = {
         ...current,
-        ...(transport ? { payload: transport.payload } : {}),
+        payload,
         serverCommitUnknown: transport?.readOnly ? current.serverCommitUnknown === true : true,
       };
       await repository.putCommand(transportCommand);
