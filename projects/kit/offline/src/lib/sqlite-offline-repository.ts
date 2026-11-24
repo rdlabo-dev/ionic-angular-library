@@ -1191,7 +1191,7 @@ export class SqliteOfflineRepository implements OfflineRepository {
         ? {}
         : { reconciliationIdentity: this.#parse(row['reconciliation_identity_json']) as OfflineCommand['reconciliationIdentity'] }),
     };
-    return recoverOfflineCommand(command, this.#options.recoverStoredCommand);
+    return recoverOfflineCommand(command);
   }
 
   #putCommand(databaseId: string, command: OfflineCommand): Promise<void> {

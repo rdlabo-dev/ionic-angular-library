@@ -86,11 +86,6 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  */
 export const isMaintenanceError = (error: HttpErrorResponse): boolean => error.status === 503 && error.error?.code === 'MAINTENANCE';
 
-/** Whether an HTTP failure is eligible for the Kit transport's transient retry policy. */
-export function isTransientHttpError(error: HttpErrorResponse): boolean {
-  return RETRYABLE_STATUSES.includes(error.status) && !isMaintenanceError(error);
-}
-
 /** A write may have committed during this attempt or an earlier attempt with the same key. */
 export function isWriteOutcomeUnknown(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -101,15 +96,17 @@ export function isWriteOutcomeUnknown(error: unknown): boolean {
 /**
  * Parse a `Retry-After` header (delta-seconds or an HTTP-date) into milliseconds, or `null` when it
  * is absent or unparseable.
+ *
+ * @internal
  */
-export const parseRetryAfterMs = (error: HttpErrorResponse): number | null => {
+const parseRetryAfterMs = (error: HttpErrorResponse): number | null => {
   const header = error.headers?.get('Retry-After');
   if (!header) {
     return null;
   }
   const seconds = Number(header);
   if (Number.isFinite(seconds)) {
-    return Math.max(0, Math.min(Number.MAX_SAFE_INTEGER - Date.now(), seconds * 1000));
+    return Math.max(0, seconds * 1000);
   }
   const dateMs = Date.parse(header);
   return Number.isNaN(dateMs) ? null : Math.max(0, dateMs - Date.now());
@@ -549,7 +546,12 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
     return throwError(() => error);
   }
 
-  let priorWriteOutcomeUnknown = false;
+  let uncertainAttempt: HttpErrorResponse | undefined;
+  const preserveWriteOutcome = (error: HttpErrorResponse): HttpErrorResponse => {
+    if (!uncertainAttempt || isWriteOutcomeUnknown(error)) return error;
+    return Object.assign(new HttpErrorResponse({ ...error, url: error.url ?? undefined }), { serverCommitUnknown: true });
+  };
+
   const sendAuthenticated = (outgoing: HttpRequest<unknown>, allowAuthRecovery: boolean): Observable<HttpEvent<unknown>> =>
     from(config.getAuthHeaders(outgoing)).pipe(
       catchError((headerError: unknown) => {
@@ -559,7 +561,9 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
           config.onAuthAccessDenial?.(outgoing, headerError);
         }
         config.onAuthError?.(outgoing, headerError);
-        return throwError(() => headerError);
+        return throwError(() =>
+          headerError instanceof HttpErrorResponse ? preserveWriteOutcome(headerError) : (uncertainAttempt ?? headerError),
+        );
       }),
       mergeMap((authHeaders) => {
         const req = outgoing.clone({ setHeaders: { ...authHeaders, ...config.buildExtraHeaders?.(outgoing) } });
@@ -584,6 +588,7 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
             count: MAX_RETRIES,
             delay: (error: HttpErrorResponse, retryCount: number) =>
               from(Network.getStatus()).pipe(
+                catchError(() => throwError(() => error)),
                 mergeMap((network) => {
                   // Offline → don't wait out the retries; fail fast so offlineFallback can take over.
                   if (!network.connected) {
@@ -591,15 +596,13 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
                   }
                   // Only replay idempotent requests, and only on a transient status.
                   // Maintenance 503 is intentional — never retry; go straight to onMaintenance.
-                  if (!retryable || !isTransientHttpError(error)) {
+                  if (!retryable || !RETRYABLE_STATUSES.includes(error.status) || isMaintenanceError(error)) {
                     return throwError(() => error);
                   }
                   // Short linear backoff (500ms, 1000ms, …) plus jitter to de-correlate a fleet of
                   // clients reconnecting at once; the server's Retry-After wins when present.
                   const backoff = parseRetryAfterMs(error) ?? retryCount * 500 + Math.random() * 250;
-                  const keyedWrite = !RETRYABLE_METHODS.includes(req.method) && req.headers.has('Idempotency-Key');
-                  if (keyedWrite && backoff > DEFAULT_TIMEOUT_MS) return throwError(() => error);
-                  if (keyedWrite && isWriteOutcomeUnknown(error)) priorWriteOutcomeUnknown = true;
+                  if (!RETRYABLE_METHODS.includes(req.method) && isWriteOutcomeUnknown(error)) uncertainAttempt = error;
                   return timer(backoff);
                 }),
               ),
@@ -610,10 +613,7 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
             }
           }),
           catchError((failure: HttpErrorResponse) => {
-            const error =
-              priorWriteOutcomeUnknown && failure instanceof HttpErrorResponse
-                ? Object.assign(new HttpErrorResponse({ ...failure, url: failure.url ?? undefined }), { serverCommitUnknown: true })
-                : failure;
+            const error = preserveWriteOutcome(failure);
             const mayRecover =
               allowAuthRecovery &&
               isExplicitAuthDenial(error) &&

@@ -3883,13 +3883,13 @@ describe('OfflineSyncService', () => {
   });
 
   it.each([
-    [401, 'blocked_auth', 'blocked_auth', false],
-    [409, 'conflict', 'conflict', false],
-    [422, 'rejected', 'rejected', false],
-    [408, 'retry_wait', 'pending', true],
-    [429, 'retry_wait', 'pending', false],
-    [500, 'retry_wait', 'pending', true],
-  ] as const)('HTTP %sを%sへ分類して操作を保持する', async (status, state, rowSyncState, serverCommitUnknown) => {
+    [401, 'blocked_auth', 'blocked_auth'],
+    [409, 'conflict', 'conflict'],
+    [422, 'rejected', 'rejected'],
+    [408, 'retry_wait', 'pending'],
+    [429, 'retry_wait', 'pending'],
+    [500, 'retry_wait', 'pending'],
+  ] as const)('HTTP %sを%sへ分類して操作を保持する', async (status, state, rowSyncState) => {
     execute.mockRejectedValueOnce({ status });
     await service.enqueue(
       {
@@ -3903,7 +3903,11 @@ describe('OfflineSyncService', () => {
     );
     connected.set(true);
     await service.flush();
-    expect(service.pendingCommands()[0]).toMatchObject({ state, lastErrorCode: String(status), serverCommitUnknown });
+    expect(service.pendingCommands()[0]).toMatchObject({
+      state,
+      lastErrorCode: String(status),
+      serverCommitUnknown: [408, 429, 500].includes(status),
+    });
     expect(rows[0]?.syncState).toBe(rowSyncState);
   });
 
@@ -4317,35 +4321,6 @@ describe('OfflineSyncService', () => {
     expectAwaitingPull(1);
   });
 
-  it('keeps an unresolved foreground write protected until its receipt conflict is explicitly accepted', async () => {
-    const commandId = await service.enqueue(
-      {
-        commandId: 'original-write',
-        scopeId: '10',
-        aggregateType: 'documents',
-        identity: { kind: 'generated', localId: '1' },
-        operation: 'documents.upsert',
-        payload: { revision: 1 },
-        serverCommitUnknown: true,
-      },
-      { flush: false },
-    );
-    TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = () => ({ payload: { revision: 2 }, readOnly: true });
-    execute.mockRejectedValueOnce({ status: 503 }).mockRejectedValueOnce({ status: 409 });
-    connected.set(true);
-    await service.flush();
-    expect(commands[0]).toMatchObject({ commandId, state: 'retry_wait', serverCommitUnknown: true });
-    await service.discard(commandId, { acceptServerVersion: true });
-    expect(commands).toHaveLength(1);
-
-    await service.retryNow(commandId);
-    expect(execute.mock.calls.map(([command]) => command.payload)).toEqual([{ revision: 1 }, { revision: 1 }]);
-    expect(commands[0]).toMatchObject({ commandId, state: 'conflict', lastErrorCode: 'receipt_conflict', serverCommitUnknown: true });
-    await expect(service.discard(commandId)).rejects.toBeInstanceOf(OfflineCommandInFlightError);
-    await service.discard(commandId, { acceptServerVersion: true });
-    expect(commands).toEqual([]);
-  });
-
   it('executorが同じkeyの未commitを証明した競合はambiguityを解除して通常解決へ渡す', async () => {
     execute.mockRejectedValueOnce({ status: 0 }).mockRejectedValueOnce({ status: 412 });
     provesCommandNotCommitted.mockImplementation((error) => (error as { status?: number }).status === 412);
@@ -4571,26 +4546,7 @@ describe('OfflineSyncService', () => {
     expectAwaitingPull(1);
   });
 
-  it('rejects a non-JSON prepared intent before transport or persistence', async () => {
-    const commandId = await service.enqueue(
-      {
-        scopeId: '10',
-        aggregateType: 'documents',
-        identity: { kind: 'generated', localId: 'invalid-prepare' },
-        operation: 'documents.upsert',
-        payload: { valid: true },
-      },
-      { flush: false },
-    );
-    TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = () => ({ payload: { invalid: Infinity } });
-    connected.set(true);
-    await expect(service.flush()).rejects.toBeInstanceOf(OfflinePayloadValidationError);
-    expect(commands[0]).toMatchObject({ commandId, state: 'rejected', payload: { valid: true }, serverCommitUnknown: false });
-    expect(rows[0]?.syncState).toBe('rejected');
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it.each(['row lookup', 'prepareTransport'])('restores the retryable command when %s fails before sending', async (step) => {
+  it('local replica row lookup rejectionでもsendingに残さずretry_waitへ戻す', async () => {
     const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository;
     await service.enqueue(
       {
@@ -4603,14 +4559,8 @@ describe('OfflineSyncService', () => {
       { flush: false },
     );
     const lookupError = new Error('replica lookup failed');
-    if (step === 'row lookup') {
-      vi.mocked(repository.getReplicaRow).mockRejectedValue(lookupError);
-      vi.mocked(repository.getReplicaRowIncludingPendingDelete!).mockRejectedValue(lookupError);
-    } else {
-      TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = () => {
-        throw lookupError;
-      };
-    }
+    vi.mocked(repository.getReplicaRow).mockRejectedValue(lookupError);
+    vi.mocked(repository.getReplicaRowIncludingPendingDelete!).mockRejectedValue(lookupError);
     connected.set(true);
     await service.refreshSession();
     await vi.waitFor(() => expect(handleError).toHaveBeenCalledWith(lookupError));

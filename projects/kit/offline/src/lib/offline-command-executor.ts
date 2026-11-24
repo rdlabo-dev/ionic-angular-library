@@ -33,14 +33,6 @@ export type OfflineCommandTarget =
 
 /** Product adapter that sends commands and projects acknowledgements into entities. */
 export interface OfflineCommandExecutor {
-  /** Tests cross-aggregate dependencies using only the already loaded outbox. */
-  blockedByEarlierCommands?(command: OfflineCommand, earlier: readonly OfflineCommand[]): boolean;
-  /**
-   * Finalizes the durable JSON intent shared by projection and replay. Keep it readable by both.
-   * Once delivery is uncertain Kit reuses the stored payload. Serialize any wire-only DTO in execute().
-   * A readOnly attempt looks up the original receipt without writing to the server.
-   */
-  prepareTransport?(command: OfflineCommand): { payload: unknown; readOnly?: boolean };
   /** Sends the command using `command.commandId` as its durable server-side idempotency key. */
   execute(command: OfflineCommand, target: OfflineCommandTarget): Promise<OfflineCommandResult>;
   /**

@@ -92,7 +92,7 @@ export const appConfig: ApplicationConfig = {
 
 Automatic retry is limited to `GET`, `HEAD`, `OPTIONS`, or requests carrying an `Idempotency-Key`. Ordinary writes are never retried automatically. Retries cover transient statuses `0`, `408`, `429`, `502`, `503`, and `504`, and honor `Retry-After`.
 
-For a keyed write, a retry delay over 60 seconds ends the foreground attempt immediately. The offline fallback receives the final HTTP error and its `Retry-After` header. Without a fallback, the caller receives that error and is responsible for retrying with the same key and payload after the indicated delay.
+For keyed writes, `isWriteOutcomeUnknown(error)` is true for a lost response, timeout, or server error, including when a later retry returns a different HTTP status. Reuse the original key and payload when retrying such a write.
 
 When offline support is enabled, register `offlineInterceptor` before `kitAuthInterceptor`. Local mode then prevents credential generation and network transport while allowing a matched read policy to serve the scoped replica.
 
