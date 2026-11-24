@@ -1,3 +1,4 @@
+import { recoverOfflineCommand } from './offline-command-recovery';
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import {
   canonicalOfflineReplicaIdentity,
@@ -28,7 +29,6 @@ import {
 import {
   OFFLINE_SCHEMA_VERSION,
   canonicalOfflineReplicaRowKey,
-  recoverOfflineCommand,
   type OfflineCommand,
   type OfflineCommandIdentity,
   type OfflinePrincipalId,

@@ -3883,13 +3883,13 @@ describe('OfflineSyncService', () => {
   });
 
   it.each([
-    [401, 'blocked_auth', 'blocked_auth'],
-    [409, 'conflict', 'conflict'],
-    [422, 'rejected', 'rejected'],
-    [408, 'retry_wait', 'pending'],
-    [429, 'retry_wait', 'pending'],
-    [500, 'retry_wait', 'pending'],
-  ] as const)('HTTP %sを%sへ分類して操作を保持する', async (status, state, rowSyncState) => {
+    [401, 'blocked_auth', 'blocked_auth', false],
+    [409, 'conflict', 'conflict', false],
+    [422, 'rejected', 'rejected', false],
+    [408, 'retry_wait', 'pending', true],
+    [429, 'retry_wait', 'pending', false],
+    [500, 'retry_wait', 'pending', true],
+  ] as const)('HTTP %sを%sへ分類して操作を保持する', async (status, state, rowSyncState, serverCommitUnknown) => {
     execute.mockRejectedValueOnce({ status });
     await service.enqueue(
       {
@@ -3903,7 +3903,7 @@ describe('OfflineSyncService', () => {
     );
     connected.set(true);
     await service.flush();
-    expect(service.pendingCommands()[0]).toMatchObject({ state, lastErrorCode: String(status) });
+    expect(service.pendingCommands()[0]).toMatchObject({ state, lastErrorCode: String(status), serverCommitUnknown });
     expect(rows[0]?.syncState).toBe(rowSyncState);
   });
 
@@ -4315,6 +4315,34 @@ describe('OfflineSyncService', () => {
     expect(execute).toHaveBeenCalledTimes(3);
     expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual([commandId, commandId, commandId]);
     expectAwaitingPull(1);
+  });
+
+  it('keeps an unresolved foreground write protected until its receipt conflict is explicitly accepted', async () => {
+    const commandId = await service.enqueue(
+      {
+        commandId: 'original-write',
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: '1' },
+        operation: 'documents.upsert',
+        payload: { revision: 1 },
+        serverCommitUnknown: true,
+      },
+      { flush: false },
+    );
+    TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = ({ payload }) => ({ payload, readOnly: true });
+    execute.mockRejectedValueOnce({ status: 503 }).mockRejectedValueOnce({ status: 409 });
+    connected.set(true);
+    await service.flush();
+    expect(commands[0]).toMatchObject({ commandId, state: 'retry_wait', serverCommitUnknown: true });
+    await service.discard(commandId, { acceptServerVersion: true });
+    expect(commands).toHaveLength(1);
+
+    await service.retryNow(commandId);
+    expect(commands[0]).toMatchObject({ commandId, state: 'conflict', lastErrorCode: 'receipt_conflict', serverCommitUnknown: true });
+    await expect(service.discard(commandId)).rejects.toBeInstanceOf(OfflineCommandInFlightError);
+    await service.discard(commandId, { acceptServerVersion: true });
+    expect(commands).toEqual([]);
   });
 
   it('executorが同じkeyの未commitを証明した競合はambiguityを解除して通常解決へ渡す', async () => {

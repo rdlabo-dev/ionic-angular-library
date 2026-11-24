@@ -860,6 +860,7 @@ describe('IonicOfflineRepository', () => {
       retry: { ...base, commandId: 'legacy-retry', state: 'retry_wait' },
       conflict: { ...base, commandId: 'legacy-conflict', state: 'conflict', attempts: 2 },
       rejected: { ...base, commandId: 'legacy-rejected', state: 'rejected', attempts: 2 },
+      timeout: { ...base, commandId: 'legacy-timeout', state: 'rejected', lastErrorCode: '408' },
       firstRejected: { ...base, commandId: 'legacy-first-rejected', state: 'rejected', attempts: 1 },
       explicitSafe: { ...base, commandId: 'new-pretransport', state: 'retry_wait', serverCommitUnknown: false },
     });
@@ -871,6 +872,7 @@ describe('IonicOfflineRepository', () => {
         expect.objectContaining({ commandId: 'legacy-retry', serverCommitUnknown: true }),
         expect.objectContaining({ commandId: 'legacy-conflict', serverCommitUnknown: true }),
         expect.objectContaining({ commandId: 'legacy-rejected', serverCommitUnknown: true }),
+        expect.objectContaining({ commandId: 'legacy-timeout', state: 'retry_wait', serverCommitUnknown: true }),
         expect.objectContaining({ commandId: 'new-pretransport', serverCommitUnknown: false }),
       ]),
     );

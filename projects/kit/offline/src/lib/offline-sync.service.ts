@@ -30,7 +30,7 @@ import type {
   OfflineRepository,
   OfflineScope,
 } from './offline-repository';
-import { canonicalOfflineReplicaRowKey, OFFLINE_REPOSITORY, recoverOfflineCommand } from './offline-repository';
+import { canonicalOfflineReplicaRowKey, OFFLINE_REPOSITORY } from './offline-repository';
 import { OfflineReplicaTransientWriteError } from './offline-repository-concurrency';
 import {
   canonicalOfflinePrincipalId,
@@ -867,6 +867,7 @@ export class OfflineSyncService {
     return new TextEncoder().encode(JSON.stringify(commands)).byteLength;
   }
 
+  /** Discards a local change. An ambiguous write requires an explicit choice after a read-only receipt conflict. */
   async discard(commandId: string, options: { flush?: boolean; acceptServerVersion?: boolean } = {}): Promise<void> {
     const generation = this.#generation;
     if (!(await this.#restoreCurrentGeneration(generation))) return;
@@ -1375,6 +1376,10 @@ export class OfflineSyncService {
     );
   }
 
+  #readyToSend(command: OfflineCommand, now: number): boolean {
+    return command.state === 'pending' || (command.state === 'retry_wait' && (command.retryAt ?? 0) <= now);
+  }
+
   #eligibleAggregateGroups(commands: OfflineCommand[]): OfflineCommand[][] {
     const now = Date.now();
     const groups = new Map<string, OfflineCommand[]>();
@@ -1384,9 +1389,7 @@ export class OfflineSyncService {
       group.push(command);
       groups.set(key, group);
     }
-    return [...groups.values()].filter((group) =>
-      group.some((command) => command.state === 'pending' || (command.state === 'retry_wait' && (command.retryAt ?? 0) <= now)),
-    );
+    return [...groups.values()].filter((group) => group.some((command) => this.#readyToSend(command, now)));
   }
 
   async #sendAggregate(
@@ -1432,8 +1435,7 @@ export class OfflineSyncService {
   ): Promise<boolean> {
     if (!this.#isCurrent(generation)) return false;
     if (command.state === 'awaiting_pull') return true;
-    if (command.state === 'retry_wait' && (command.retryAt ?? 0) > Date.now()) return false;
-    if (!['pending', 'retry_wait'].includes(command.state)) return false;
+    if (!this.#readyToSend(command, Date.now())) return false;
     // User-scoped aggregates ignore scopeId in the FIFO key, so later commands may
     // belong to scopes that failed pre-pull even when the head was admitted.
     if (!pulledScopeKeys.has(this.#scopeKey({ userId: command.userId, scopeId: command.scopeId }))) return false;
@@ -1453,16 +1455,13 @@ export class OfflineSyncService {
       const transportCommand = await this.#markTransportStarted(claimedCommand, generation, transport);
       return { row, transport, transportCommand };
     };
-    const preparation = await prepare().then(
-      (value) => ({ status: 'fulfilled' as const, value }),
-      (error: unknown) => ({ status: 'rejected' as const, error }),
-    );
-    if (preparation.status === 'rejected') {
-      if (!this.#isCurrent(generation)) return false;
-      await this.#persistFailedCommand(claimedCommand, preparation.error, generation, null, priorCommitUnknown);
-      throw preparation.error;
-    }
-    const { row, transport, transportCommand } = preparation.value;
+    const preparation = await prepare().catch(async (error: unknown) => {
+      if (!this.#isCurrent(generation)) return null;
+      await this.#persistFailedCommand(claimedCommand, error, generation, null, priorCommitUnknown);
+      throw error;
+    });
+    if (!preparation) return false;
+    const { row, transport, transportCommand } = preparation;
     if (!transportCommand) return false;
     sending = transportCommand;
     const executeCommand = async (): Promise<OfflineCommandResult> =>
@@ -1751,11 +1750,9 @@ export class OfflineSyncService {
     }
     if (status === 409 || status === 412) {
       const lastErrorCode = readOnly && status === 409 ? 'receipt_conflict' : String(status);
-      const conflict = recoverOfflineCommand(
-        { ...command, state: 'conflict', lastErrorCode, serverCommitUnknown },
-        this.#options.recoverStoredCommand,
-      );
-      return conflict.state === 'retry_wait' && conflict.retryAt === null ? { ...conflict, retryAt: Date.now() } : conflict;
+      const conflict: OfflineCommand = { ...command, state: 'conflict', lastErrorCode, serverCommitUnknown };
+      const recovered = this.#options.recoverStoredCommand?.(conflict) ?? conflict;
+      return recovered.state === 'retry_wait' && recovered.retryAt === null ? { ...recovered, retryAt: Date.now() } : recovered;
     }
     if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
       return { ...command, state: 'rejected', lastErrorCode: String(status), serverCommitUnknown };
@@ -2060,15 +2057,11 @@ export class OfflineSyncService {
   #claimSendingCommand(command: OfflineCommand, generation: number): Promise<OfflineCommand | null> {
     const transition = this.#serializeReplicaMutation(async (repository) => {
       if (!this.#isCurrent(generation)) return null;
-      const commands = await this.#readKnownCommands(repository);
+      const commands = this.#executor.blockedByEarlierCommands
+        ? await this.#readKnownCommands(repository)
+        : await repository.getCommands({ userId: command.userId, scopeId: command.scopeId });
       const current = commands.find((candidate) => candidate.commandId === command.commandId);
-      if (
-        !current ||
-        !['pending', 'retry_wait'].includes(current.state) ||
-        (current.state === 'retry_wait' && (current.retryAt ?? 0) > Date.now()) ||
-        this.#blockedByEarlier(current, commands)
-      )
-        return null;
+      if (!current || !this.#readyToSend(current, Date.now()) || this.#blockedByEarlier(current, commands)) return null;
       const sending: OfflineCommand = {
         ...current,
         state: 'sending',

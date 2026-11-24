@@ -51,7 +51,7 @@ export type OfflineKitEncryptionOptions =
 
 /** Product-independent native offline persistence settings shared by all encryption modes. */
 interface OfflineKitOptionsBase {
-  /** Recognize and recover a previously stored product command. Must be pure and idempotent. */
+  /** Maps retained commands and newly observed conflicts to a recoverable form. Must be pure and idempotent. */
   recoverStoredCommand?(command: OfflineCommand): OfflineCommand;
   /** Runtime transport mode. Defaults to full synchronized replica/outbox behavior. */
   mode?: 'synchronized' | 'readCacheOnly';

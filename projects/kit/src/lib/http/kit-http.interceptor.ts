@@ -413,7 +413,11 @@ const shouldRevokeAuthAccess = (config: KitHttpConfig, req: HttpRequest<unknown>
  *
  * @internal
  */
-const tryRecoverAuthAccess = async (config: KitHttpConfig, request: HttpRequest<unknown>, error: HttpErrorResponse): Promise<boolean> => {
+const tryRecoverAuthAccess = async (
+  config: KitHttpConfig,
+  request: HttpRequest<unknown>,
+  error: HttpErrorResponse,
+): Promise<boolean> => {
   if (!config.recoverAuthAccess) {
     return false;
   }
