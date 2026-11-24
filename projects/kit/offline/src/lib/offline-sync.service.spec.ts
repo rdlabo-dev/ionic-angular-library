@@ -3886,6 +3886,8 @@ describe('OfflineSyncService', () => {
     [401, 'blocked_auth', 'blocked_auth'],
     [409, 'conflict', 'conflict'],
     [422, 'rejected', 'rejected'],
+    [408, 'retry_wait', 'pending'],
+    [429, 'retry_wait', 'pending'],
     [500, 'retry_wait', 'pending'],
   ] as const)('HTTP %sを%sへ分類して操作を保持する', async (status, state, rowSyncState) => {
     execute.mockRejectedValueOnce({ status });
@@ -4540,7 +4542,7 @@ describe('OfflineSyncService', () => {
     expectAwaitingPull(1);
   });
 
-  it('local replica row lookup rejectionでもsendingに残さずretry_waitへ戻す', async () => {
+  it.each(['row lookup', 'prepareTransport'])('restores the retryable command when %s fails before sending', async (step) => {
     const repository = TestBed.inject(OFFLINE_REPOSITORY) as OfflineRepository;
     await service.enqueue(
       {
@@ -4553,8 +4555,14 @@ describe('OfflineSyncService', () => {
       { flush: false },
     );
     const lookupError = new Error('replica lookup failed');
-    vi.mocked(repository.getReplicaRow).mockRejectedValue(lookupError);
-    vi.mocked(repository.getReplicaRowIncludingPendingDelete!).mockRejectedValue(lookupError);
+    if (step === 'row lookup') {
+      vi.mocked(repository.getReplicaRow).mockRejectedValue(lookupError);
+      vi.mocked(repository.getReplicaRowIncludingPendingDelete!).mockRejectedValue(lookupError);
+    } else {
+      TestBed.inject(OFFLINE_COMMAND_EXECUTOR).prepareTransport = () => {
+        throw lookupError;
+      };
+    }
     connected.set(true);
     await service.refreshSession();
     await vi.waitFor(() => expect(handleError).toHaveBeenCalledWith(lookupError));

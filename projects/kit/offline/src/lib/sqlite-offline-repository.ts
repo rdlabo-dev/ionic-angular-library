@@ -28,6 +28,7 @@ import {
 import {
   OFFLINE_SCHEMA_VERSION,
   canonicalOfflineReplicaRowKey,
+  recoverOfflineCommand,
   type OfflineCommand,
   type OfflineCommandIdentity,
   type OfflinePrincipalId,
@@ -1157,7 +1158,7 @@ export class SqliteOfflineRepository implements OfflineRepository {
   }
 
   #command(row: SQLiteRow): OfflineCommand {
-    return {
+    const command: OfflineCommand = {
       commandId: this.#string(row['command_id']),
       userId: parseOfflinePrincipalId(this.#string(row['user_id'])),
       scopeId: this.#string(row['scope_id']),
@@ -1190,6 +1191,7 @@ export class SqliteOfflineRepository implements OfflineRepository {
         ? {}
         : { reconciliationIdentity: this.#parse(row['reconciliation_identity_json']) as OfflineCommand['reconciliationIdentity'] }),
     };
+    return recoverOfflineCommand(command, this.#options.recoverStoredCommand);
   }
 
   #putCommand(databaseId: string, command: OfflineCommand): Promise<void> {

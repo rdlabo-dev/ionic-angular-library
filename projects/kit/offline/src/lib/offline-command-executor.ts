@@ -33,6 +33,10 @@ export type OfflineCommandTarget =
 
 /** Product adapter that sends commands and projects acknowledgements into entities. */
 export interface OfflineCommandExecutor {
+  /** Tests cross-aggregate dependencies using only the already loaded outbox. */
+  blockedByEarlierCommands?(command: OfflineCommand, earlier: readonly OfflineCommand[]): boolean;
+  /** Finalizes the payload before it is durably marked for delivery. Receipt lookups do not write to the server. */
+  prepareTransport?(command: OfflineCommand): { payload: unknown; readOnly?: boolean };
   /** Sends the command using `command.commandId` as its durable server-side idempotency key. */
   execute(command: OfflineCommand, target: OfflineCommandTarget): Promise<OfflineCommandResult>;
   /**

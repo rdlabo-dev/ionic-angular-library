@@ -826,6 +826,20 @@ describe('kitAuthInterceptor — retry policy & classification', () => {
   const postReq = new HttpRequest<unknown>('POST', '/api/save', {});
   const flush = () => new Promise((r) => setTimeout(r, 0));
 
+  it.each([408, 429])('preserves the outcome of a keyed write after %i followed by two 429s', async (firstStatus) => {
+    setupInterceptor(makeConfig());
+    const headers = new HttpHeaders({ 'Retry-After': '0' });
+    const req = postReq.clone({ setHeaders: { 'Idempotency-Key': 'same-write' } });
+    const statuses = [firstStatus, 429, 429];
+    const failure = await firstValueFrom(
+      runInterceptor(req, () => throwError(() => new HttpErrorResponse({ status: statuses.shift(), headers }))),
+    ).catch((error: HttpErrorResponse & { serverCommitUnknown?: boolean }) => error);
+    expect(statuses).toEqual([]);
+    expect(failure).toBeInstanceOf(HttpErrorResponse);
+    expect(failure).toMatchObject({ status: 429, headers });
+    expect((failure as { serverCommitUnknown?: boolean }).serverCommitUnknown === true).toBe(firstStatus === 408);
+  });
+
   it('does NOT retry a non-idempotent POST even on a retryable status (502)', async () => {
     setupInterceptor(makeConfig());
     let subs = 0;

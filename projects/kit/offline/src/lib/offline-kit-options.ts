@@ -1,3 +1,4 @@
+import type { OfflineCommand } from './offline-repository';
 import type { OfflineStorageLifecycle } from './offline-storage-lifecycle';
 import { InjectionToken, type Type } from '@angular/core';
 import type { OfflineReplicaSchemaBundle } from './offline-replica-schema';
@@ -50,6 +51,8 @@ export type OfflineKitEncryptionOptions =
 
 /** Product-independent native offline persistence settings shared by all encryption modes. */
 interface OfflineKitOptionsBase {
+  /** Recognize and recover a previously stored product command. Must be pure and idempotent. */
+  recoverStoredCommand?(command: OfflineCommand): OfflineCommand;
   /** Runtime transport mode. Defaults to full synchronized replica/outbox behavior. */
   mode?: 'synchronized' | 'readCacheOnly';
   /** SQLite database name used on iOS and Android. */

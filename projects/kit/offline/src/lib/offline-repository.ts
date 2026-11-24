@@ -104,6 +104,14 @@ interface OfflineCommandBase<T> extends OfflineScope {
 
 export type OfflineCommand<T = unknown> = OfflineCommandBase<T>;
 
+/** Normalizes Kit's historical terminal timeouts and delegates legacy product payloads to the app. */
+export function recoverOfflineCommand(command: OfflineCommand, recover?: (command: OfflineCommand) => OfflineCommand): OfflineCommand {
+  if (command.state === 'rejected' && command.lastErrorCode === '408') {
+    return { ...command, state: 'retry_wait', retryAt: null, serverCommitUnknown: true };
+  }
+  return recover?.(command) ?? command;
+}
+
 /** Product replica row materialized from a versioned schema entity. */
 interface OfflineReplicaRowBase<TValues> extends OfflineScope {
   /** Stable source key matching {@link OfflineReplicaEntitySchema.sourceKey}. */
@@ -443,7 +451,8 @@ export class IonicOfflineRepository implements OfflineRepository {
     return this.#withCommittedRead(() => read(this.#reader()));
   }
 
-  #normalizeCommand(command: OfflineCommand): OfflineCommand {
+  #normalizeCommand(stored: OfflineCommand): OfflineCommand {
+    const command = recoverOfflineCommand(stored, this.#options.recoverStoredCommand);
     if (command.serverCommitUnknown !== undefined) return command;
     const legacyAmbiguousFailure = command.attempts >= 2 && ['blocked_auth', 'conflict', 'rejected'].includes(command.state);
     return command.state === 'sending' || command.state === 'retry_wait' || legacyAmbiguousFailure
