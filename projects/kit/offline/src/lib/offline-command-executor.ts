@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core';
-import type { OfflineCommand, OfflineScope } from './offline-repository';
+import type { OfflineCommand, OfflineRepositoryReader, OfflineScope } from './offline-repository';
 import type { OfflineCommandIdentity, OfflinePrincipalId, OfflineReplicaIdentity } from './offline-identity';
 import type { OfflineGeneratedRemoteId, OfflineNaturalKey } from './offline-replica-schema';
 
@@ -33,6 +33,15 @@ export type OfflineCommandTarget =
 
 /** Product adapter that sends commands and projects acknowledgements into entities. */
 export interface OfflineCommandExecutor {
+  /**
+   * Defers a send while an earlier, unacknowledged command in another aggregate must finish first.
+   * Called when claiming a command and when scheduling retry deadlines. Only read through the supplied reader.
+   */
+  blockedByEarlierCommands?(
+    command: OfflineCommand,
+    earlier: readonly OfflineCommand[],
+    reader: OfflineRepositoryReader,
+  ): boolean | Promise<boolean>;
   /** Sends the command using `command.commandId` as its durable server-side idempotency key. */
   execute(command: OfflineCommand, target: OfflineCommandTarget): Promise<OfflineCommandResult>;
   /**
@@ -44,13 +53,15 @@ export interface OfflineCommandExecutor {
 }
 
 /**
- * Returns a command whose only changed field is `baseRevision`.
+ * Updates the local base revision only while a command can safely be rebased.
+ * An in-flight or possibly committed command retains its original precondition on replay.
  *
  * Payload and every other field are copied unchanged. Kit uses this when a
  * newer server revision is known, and passes `null` after a generated remote
  * identity is released.
  */
 export function offlineCommandWithBaseRevision(command: OfflineCommand, baseRevision: string | number | null): OfflineCommand {
+  if (command.serverCommitUnknown || command.state === 'sending') return command;
   return { ...command, baseRevision };
 }
 

@@ -196,6 +196,9 @@ export class OfflineSyncService {
   #activeUserId: OfflinePrincipalId | null = null;
   #flushPromise: Promise<void> | null = null;
   #flushLifecycleRevision = 0;
+  // A durable awaiting_pull is a barrier after restart. Only an acknowledgement
+  // observed against the same replica base can release successors before pull.
+  readonly #confirmedOrder = new Set<string>();
   #resumeAfterFlush = false;
   #partialFlushInFlight = false;
   #chainedFullFlush: Promise<void> | null = null;
@@ -626,7 +629,7 @@ export class OfflineSyncService {
     }
     const existing = await this.#getReplicaRowForSync(scope, sourceKey, commandIdentity, repository);
     if (existing?.serverRevision != null && existing.serverRevision !== command.baseRevision) {
-      command = { ...command, baseRevision: existing.serverRevision };
+      command = offlineCommandWithBaseRevision(command, existing.serverRevision);
     }
     const generatedIdentity = request.identity.kind === 'generated' ? request.identity : null;
     const initialRemoteId = this.#initialRemoteId(
@@ -1236,6 +1239,9 @@ export class OfflineSyncService {
     for (const scope of dirtyScopes.values()) {
       this.#pendingPullScopes.set(this.#scopeKey(scope), scope);
     }
+    const barriers = (await this.#readKnownCommands()).filter(
+      (item) => item.state === 'awaiting_pull' && !this.#confirmedOrder.has(item.commandId),
+    );
     const postPullFailures: unknown[] = [];
     // Fatal pre-pull skips pending post-pulls; recovery is auth/upgrade-driven, not timer retry.
     // Fatal post-send pull stops remaining pending scopes the same way (ACK preserved, no resend).
@@ -1284,6 +1290,10 @@ export class OfflineSyncService {
       throw failures[0];
     }
     if (this.#isCurrent(generation)) {
+      if (barriers.length && this.#commands().some((item) => item.state === 'pending' || item.state === 'retry_wait')) {
+        const remaining = new Set(this.#commands().map((item) => item.commandId));
+        if (barriers.some((item) => !remaining.has(item.commandId))) this.#resumeAfterFlush = true;
+      }
       // Use the snapshot that armed the retry timer; another async read here can swallow its wake-up.
       for (const command of this.#commands()) {
         if (command.state !== 'awaiting_pull') continue;
@@ -1384,7 +1394,7 @@ export class OfflineSyncService {
   #unsentAggregateGroups(commands: OfflineCommand[]): [OfflineCommand, ...OfflineCommand[]][] {
     const groups = new Map<string, [OfflineCommand, ...OfflineCommand[]]>();
     for (const command of commands) {
-      if (command.state === 'awaiting_pull') continue;
+      if (command.state === 'awaiting_pull' && this.#confirmedOrder.has(command.commandId)) continue;
       const key = this.#aggregateKey(command);
       const group = groups.get(key);
       if (group) group.push(command);
@@ -1442,33 +1452,31 @@ export class OfflineSyncService {
     if (!pulledScopeKeys.has(this.#scopeKey({ userId: command.userId, scopeId: command.scopeId }))) return false;
     let sending = await this.#claimSendingCommand(command, generation);
     if (!sending || !this.#isCurrent(generation)) return false;
-    await this.#refreshState(generation);
-    if (!this.#isCurrent(generation)) return false;
     const claimedCommand = sending;
-    const readRow = async (): Promise<OfflineReplicaRow | null> => this.#rowForCommand(claimedCommand);
-    const rowResult = await readRow().then(
-      (row) => ({ status: 'fulfilled' as const, row }),
-      (error: unknown) => ({ status: 'rejected' as const, error }),
-    );
-    if (rowResult.status === 'rejected') {
-      if (!this.#isCurrent(generation)) return false;
-      await this.#persistFailedCommand(sending, rowResult.error, generation, null, sending.serverCommitUnknown === true);
-      throw rowResult.error;
-    }
-    const row = rowResult.row;
-    if (!row) {
-      const error = new Error(
-        `Offline replica row not found: ${sending.aggregateType}/${canonicalOfflineCommandIdentity(sending.identity)}`,
-      );
-      await this.#persistFailedCommand(sending, error, generation, null, sending.serverCommitUnknown === true);
+    const priorCommitUnknown = claimedCommand.serverCommitUnknown === true;
+    const prepare = async () => {
+      await this.#refreshState(generation);
+      if (!this.#isCurrent(generation)) return null;
+      const row = await this.#rowForCommand(claimedCommand);
+      if (!this.#isCurrent(generation)) return null;
+      if (!row) {
+        throw new Error(
+          `Offline replica row not found: ${claimedCommand.aggregateType}/${canonicalOfflineCommandIdentity(claimedCommand.identity)}`,
+        );
+      }
+      const target = offlineCommandTargetFromReplicaRow(row);
+      const transport = await this.#markTransportStarted(claimedCommand, generation);
+      return transport ? { row, target, transport } : null;
+    };
+    const prepared = await prepare().catch(async (error: unknown) => {
+      if (!this.#isCurrent(generation)) return null;
+      await this.#persistFailedCommand(claimedCommand, error, generation, null, priorCommitUnknown);
       throw error;
-    }
-    const priorCommitUnknown = sending.serverCommitUnknown === true;
-    const transportCommand = await this.#markTransportStarted(sending, generation);
-    if (!transportCommand) return false;
-    sending = transportCommand;
-    const executeCommand = async (): Promise<OfflineCommandResult> =>
-      this.#executor.execute(sending, offlineCommandTargetFromReplicaRow(row));
+    });
+    if (!prepared || !this.#isCurrent(generation)) return false;
+    const { row, target } = prepared;
+    sending = prepared.transport;
+    const executeCommand = async (): Promise<OfflineCommandResult> => this.#executor.execute(sending, target);
     const execution = await executeCommand().then(
       (result) => ({ status: 'fulfilled' as const, result }),
       (error: unknown) => ({ status: 'rejected' as const, error }),
@@ -1498,7 +1506,7 @@ export class OfflineSyncService {
       const scope = { userId: sending.userId, scopeId: sending.scopeId };
       dirtyScopes.set(this.#scopeKey(scope), scope);
     }
-    return true;
+    return this.#confirmedOrder.has(sending.commandId);
   }
 
   async #completeCommand(
@@ -1546,7 +1554,19 @@ export class OfflineSyncService {
     );
     const latestIndex = latestCommands.findIndex((candidate) => candidate.commandId === command.commandId);
     if (latestIndex < 0) return;
-    const revision = result.serverRevision;
+    const current = await this.#rowForCommand(command, repository);
+    if (!this.#isCurrent(generation)) return;
+    if (!current) {
+      throw new Error(`Offline replica row disappeared while completing command ${command.commandId}.`);
+    }
+    this.#assertServerRevision(result.serverRevision);
+    // A cached acknowledgement can predate a pull that already advanced the replica.
+    const needsPull =
+      result.serverRevision !== undefined &&
+      current.serverRevision != null &&
+      current.serverRevision !== command.baseRevision &&
+      result.serverRevision !== current.serverRevision;
+    const revision = needsPull ? undefined : result.serverRevision;
     const following = latestCommands.slice(latestIndex + 1);
     const rebased =
       result.clearRemoteId === true
@@ -1554,12 +1574,6 @@ export class OfflineSyncService {
         : revision === undefined
           ? following
           : following.map((item) => offlineCommandWithBaseRevision(item, revision));
-    const current = await this.#rowForCommand(command, repository);
-    if (!this.#isCurrent(generation)) return;
-    if (!current) {
-      throw new Error(`Offline replica row disappeared while completing command ${command.commandId}.`);
-    }
-    this.#assertServerRevision(result.serverRevision);
     const removesReplica = result.removeReplica === true || command.replicaMutation === 'delete';
     if (result.clearRemoteId === true && !removesReplica) {
       throw new Error('Offline command can clear remoteId only for a confirmed replica removal.');
@@ -1623,6 +1637,7 @@ export class OfflineSyncService {
     });
     const scope = { userId: command.userId, scopeId: command.scopeId };
     this.#pendingPullScopes.set(this.#scopeKey(scope), scope);
+    if (!needsPull && this.#isCurrent(generation)) this.#confirmedOrder.add(command.commandId);
     commands.splice(0, commands.length, ...latestCommands);
   }
 
@@ -1941,6 +1956,7 @@ export class OfflineSyncService {
     this.#knownScopes.clear();
     this.#pendingPullScopes.clear();
     this.#pullAttentions.set([]);
+    if (this.#activeUserId !== userId) this.#confirmedOrder.clear();
     this.#activeUserId = userId;
     this.#lastCommandCreatedAt = 0;
   }
@@ -1981,15 +1997,30 @@ export class OfflineSyncService {
     const attentions =
       this.#activeUserId !== null && repository.getPullAttentions ? await repository.getPullAttentions(this.#activeUserId) : [];
     if (!this.#isCurrent(generation)) return;
+    const retained = new Set(commands.map((item) => item.commandId));
+    for (const id of this.#confirmedOrder) if (!retained.has(id)) this.#confirmedOrder.delete(id);
     this.#commands.set(commands);
     this.#pullAttentions.set(attentions);
     let nextRetry: number | null = null;
-    for (const [head] of this.#unsentAggregateGroups(commands)) {
-      if (head.state === 'retry_wait' && head.retryAt !== null) {
-        nextRetry = Math.min(nextRetry ?? head.retryAt, head.retryAt);
-      }
+    const awaiting = commands.filter((item) => item.state === 'awaiting_pull' && !this.#confirmedOrder.has(item.commandId));
+    for (const group of this.#unsentAggregateGroups(commands)) {
+      const head = group.find((item) => item.state !== 'awaiting_pull');
+      if (!head || (head.state !== 'pending' && head.state !== 'retry_wait')) continue;
+      let deadline = head.retryAt;
+      const check = async () => {
+        if (head !== group[0] || (awaiting.length && (await this.#blockedByEarlier(head, repository, awaiting)))) {
+          return Math.max(deadline ?? 0, Date.now() + POST_SEND_PULL_RETRY_MS);
+        }
+        if (deadline === null || (await this.#blockedByEarlier(head, repository, commands))) return null;
+        return deadline;
+      };
+      deadline = await check().catch((error) => {
+        this.#reportError(error);
+        return Math.max(deadline ?? 0, Date.now() + POST_SEND_PULL_RETRY_MS);
+      });
+      if (deadline !== null) nextRetry = Math.min(nextRetry ?? deadline, deadline);
     }
-    this.#scheduleRetry(nextRetry);
+    if (this.#isCurrent(generation) && this.#commands() === commands) this.#scheduleRetry(nextRetry);
   }
 
   #scheduleRetry(retryAt: number | null): void {
@@ -2007,6 +2038,7 @@ export class OfflineSyncService {
   }
 
   #invalidateFlush(): void {
+    this.#confirmedOrder.clear();
     this.#generation += 1;
     this.#flushPromise = null;
     this.#partialFlushInFlight = false;
@@ -2038,12 +2070,26 @@ export class OfflineSyncService {
     );
   }
 
+  async #blockedByEarlier(command: OfflineCommand, repository: OfflineRepository, known?: readonly OfflineCommand[]): Promise<boolean> {
+    if (!this.#executor.blockedByEarlierCommands) return false;
+    const key = this.#aggregateKey(command);
+    const earlier = (known ?? (await this.#readKnownCommands(repository))).filter(
+      (item) =>
+        (item.state !== 'awaiting_pull' || !this.#confirmedOrder.has(item.commandId)) &&
+        compareOfflineCommands(item, command) < 0 &&
+        this.#aggregateKey(item) !== key,
+    );
+    return earlier.length > 0 && this.#executor.blockedByEarlierCommands(command, earlier, repository);
+  }
+
   #claimSendingCommand(command: OfflineCommand, generation: number): Promise<OfflineCommand | null> {
     const transition = this.#serializeReplicaMutation(async (repository) => {
       if (!this.#isCurrent(generation)) return null;
       const scope = { userId: command.userId, scopeId: command.scopeId };
       const current = (await repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
       if (!current || !canSendOfflineCommand(current)) return null;
+      if (await this.#blockedByEarlier(current, repository)) return null;
+      if (!this.#isCurrent(generation)) return null;
       const sending: OfflineCommand = {
         ...current,
         state: 'sending',

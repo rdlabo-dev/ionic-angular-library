@@ -469,6 +469,108 @@ describe('OfflineSyncService', () => {
     expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['now', 'later']);
   });
 
+  it('waits for an earlier related aggregate without waking early or delaying other work', async () => {
+    vi.useFakeTimers();
+    const deadline = Date.now() + 60_000;
+    Object.assign(TestBed.inject(OFFLINE_COMMAND_EXECUTOR), {
+      blockedByEarlierCommands: (command: OfflineCommand, earlier: readonly OfflineCommand[]) =>
+        command.commandId === 'dependent' && earlier.some((item) => item.commandId === 'first'),
+    });
+    await service.enqueue({ ...documentCreate('a'), commandId: 'first', retryAt: deadline }, { flush: false });
+    await service.enqueue({ ...documentCreate('b'), commandId: 'dependent', retryAt: deadline - 59_000 }, { flush: false });
+    await service.enqueue({ ...documentCreate('c'), commandId: 'independent' }, { flush: false });
+    networkConnected = () => true;
+    TestBed.tick();
+    await service.flush();
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['independent']);
+    const pulls = pull.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(pull).toHaveBeenCalledTimes(pulls);
+    expect(commands.find((command) => command.commandId === 'dependent')).toMatchObject({ state: 'retry_wait', attempts: 0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['independent', 'first', 'dependent']);
+  });
+
+  it('design invariant: a temporary scheduling read failure allows the very next flush to deliver', async () => {
+    let readFailed = false;
+    Object.assign(TestBed.inject(OFFLINE_COMMAND_EXECUTOR), {
+      blockedByEarlierCommands: (command: OfflineCommand, earlier: readonly OfflineCommand[]) => {
+        if (!readFailed && command.commandId === 'later' && earlier.some((item) => item.state === 'sending')) {
+          readFailed = true;
+          throw new Error('temporary dependency read failure');
+        }
+        return false;
+      },
+    });
+    await service.enqueue({ ...documentCreate('a'), commandId: 'now' }, { flush: false });
+    await service.enqueue({ ...documentCreate('b'), commandId: 'later', retryAt: Date.now() + 60_000 }, { flush: false });
+    networkConnected = () => true;
+    await service.flush();
+    expect(readFailed).toBe(true);
+    await service.flush();
+    expect(commands.find((item) => item.commandId === 'now')).toMatchObject({ state: 'awaiting_pull' });
+  });
+
+  it('recovers without restart after a temporary pre-transport checkpoint write failure', async () => {
+    vi.useFakeTimers();
+    await service.enqueue({ ...documentCreate('local'), commandId: 'key' }, { flush: false });
+    beforePutCommand = async (command) => {
+      if (command.state === 'sending' && command.serverCommitUnknown) {
+        beforePutCommand = null;
+        throw new Error('transient checkpoint write failure');
+      }
+    };
+    networkConnected = () => true;
+    await expect(service.flush()).rejects.toThrow('transient checkpoint write failure');
+    expect(execute).not.toHaveBeenCalled();
+    expect(commands[0]).toMatchObject({ state: 'retry_wait' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(commands[0].state).toBe('awaiting_pull');
+  });
+
+  it.each([
+    [4, 9, 5],
+    [4, 9, 10],
+    ['old', 'current', 'receipt'],
+  ] as const)('keeps a replica advanced since base %s when applying a cached acknowledgement', async (base, current, receipt) => {
+    vi.useFakeTimers();
+    const req = documentCreate('existing');
+    await service.enqueue({ ...req, commandId: 'first', baseRevision: base, serverCommitUnknown: true }, { flush: false });
+    await service.enqueue({ ...req, commandId: 'second' }, { flush: false });
+    rows[0].serverRevision = current;
+    execute.mockResolvedValueOnce({ serverRevision: receipt });
+    networkConnected = () => true;
+    await service.flush();
+    expect(rows[0].serverRevision).toBe(current);
+    expect(commands.find((item) => item.commandId === 'second')).toMatchObject({ state: 'pending', attempts: 0 });
+    expect(commands.find((item) => item.commandId === 'first')?.state).toBe('awaiting_pull');
+    // Simulate the authoritative pull acknowledging the first command and rebasing the second.
+    pull.mockImplementationOnce(async () => {
+      commands = commands.filter((item) => item.commandId !== 'first');
+      commands[0].baseRevision = current;
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['first', 'second']);
+    expect(execute.mock.calls[1][0].baseRevision).toBe(current);
+  });
+
+  it('does not poll for a divergent acknowledgement when only an unrelated future retry remains', async () => {
+    vi.useFakeTimers();
+    await service.enqueue({ ...documentCreate('first'), baseRevision: 4, commandId: 'first' }, { flush: false });
+    rows[0].serverRevision = 9;
+    await service.enqueue({ ...documentCreate('other'), commandId: 'other', retryAt: Date.now() + 60_000 }, { flush: false });
+    execute.mockResolvedValueOnce({ serverRevision: 5 });
+    TestBed.tick();
+    networkConnected = () => true;
+    await service.flush();
+    pull.mockClear();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(pull).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.map(([item]) => item.commandId)).toEqual(['first', 'other']);
+  });
+
   it('only arms a timer for the first unsent command of an aggregate', async () => {
     vi.useFakeTimers();
     const request = documentCreate('one-document');
