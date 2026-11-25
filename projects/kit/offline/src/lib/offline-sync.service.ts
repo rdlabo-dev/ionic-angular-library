@@ -626,7 +626,7 @@ export class OfflineSyncService {
     }
     const existing = await this.#getReplicaRowForSync(scope, sourceKey, commandIdentity, repository);
     if (existing?.serverRevision != null && existing.serverRevision !== command.baseRevision) {
-      command = { ...command, baseRevision: existing.serverRevision };
+      command = offlineCommandWithBaseRevision(command, existing.serverRevision);
     }
     const generatedIdentity = request.identity.kind === 'generated' ? request.identity : null;
     const initialRemoteId = this.#initialRemoteId(
@@ -1442,10 +1442,11 @@ export class OfflineSyncService {
     if (!pulledScopeKeys.has(this.#scopeKey({ userId: command.userId, scopeId: command.scopeId }))) return false;
     let sending = await this.#claimSendingCommand(command, generation);
     if (!sending || !this.#isCurrent(generation)) return false;
-    await this.#refreshState(generation);
-    if (!this.#isCurrent(generation)) return false;
     const claimedCommand = sending;
-    const readRow = async (): Promise<OfflineReplicaRow | null> => this.#rowForCommand(claimedCommand);
+    const readRow = async (): Promise<OfflineReplicaRow | null> => {
+      await this.#refreshState(generation);
+      return this.#isCurrent(generation) ? this.#rowForCommand(claimedCommand) : null;
+    };
     const rowResult = await readRow().then(
       (row) => ({ status: 'fulfilled' as const, row }),
       (error: unknown) => ({ status: 'rejected' as const, error }),
@@ -1455,6 +1456,7 @@ export class OfflineSyncService {
       await this.#persistFailedCommand(sending, rowResult.error, generation, null, sending.serverCommitUnknown === true);
       throw rowResult.error;
     }
+    if (!this.#isCurrent(generation)) return false;
     const row = rowResult.row;
     if (!row) {
       const error = new Error(
@@ -1985,9 +1987,15 @@ export class OfflineSyncService {
     this.#pullAttentions.set(attentions);
     let nextRetry: number | null = null;
     for (const [head] of this.#unsentAggregateGroups(commands)) {
-      if (head.state === 'retry_wait' && head.retryAt !== null && !(await this.#blockedByEarlier(head, repository, commands))) {
-        nextRetry = Math.min(nextRetry ?? head.retryAt, head.retryAt);
-      }
+      if (head.state !== 'retry_wait' || head.retryAt === null) continue;
+      let deadline = head.retryAt;
+      const blocked = await this.#blockedByEarlier(head, repository, commands).catch((error) => {
+        this.#reportError(error);
+        deadline = Math.max(deadline, Date.now() + POST_SEND_PULL_RETRY_MS);
+        return false;
+      });
+      if (blocked) continue;
+      nextRetry = Math.min(nextRetry ?? deadline, deadline);
     }
     if (this.#isCurrent(generation) && this.#commands() === commands) this.#scheduleRetry(nextRetry);
   }
@@ -2062,9 +2070,6 @@ export class OfflineSyncService {
         retryAt: null,
         lastErrorCode: null,
       };
-      if (!sending.serverCommitUnknown && this.#executor.prepareTransport) {
-        sending.payload = this.#executor.prepareTransport(sending).payload;
-      }
       await repository.putCommand(sending);
       return sending;
     });

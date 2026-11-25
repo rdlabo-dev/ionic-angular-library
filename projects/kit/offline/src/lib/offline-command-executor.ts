@@ -42,11 +42,6 @@ export interface OfflineCommandExecutor {
     earlier: readonly OfflineCommand[],
     reader: OfflineRepositoryReader,
   ): boolean | Promise<boolean>;
-  /**
-   * Prepares the payload for a command with no uncertain prior commit. Kit persists it before transport and
-   * replays it unchanged if a previous attempt might have committed.
-   */
-  prepareTransport?(command: OfflineCommand): { payload: unknown };
   /** Sends the command using `command.commandId` as its durable server-side idempotency key. */
   execute(command: OfflineCommand, target: OfflineCommandTarget): Promise<OfflineCommandResult>;
   /**
@@ -58,13 +53,15 @@ export interface OfflineCommandExecutor {
 }
 
 /**
- * Returns a command whose only changed field is `baseRevision`.
+ * Updates the local base revision only while a command can safely be rebased.
+ * An in-flight or possibly committed command retains its original precondition on replay.
  *
  * Payload and every other field are copied unchanged. Kit uses this when a
  * newer server revision is known, and passes `null` after a generated remote
  * identity is released.
  */
 export function offlineCommandWithBaseRevision(command: OfflineCommand, baseRevision: string | number | null): OfflineCommand {
+  if (command.serverCommitUnknown || command.state === 'sending') return command;
   return { ...command, baseRevision };
 }
 

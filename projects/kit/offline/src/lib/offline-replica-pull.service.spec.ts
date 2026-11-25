@@ -877,7 +877,7 @@ describe('OfflineReplicaPullService', () => {
     await expect(repository.getCommands(scope)).resolves.toEqual([expect.objectContaining({ commandId: 'cmd-pending', state: 'pending' })]);
   });
 
-  it('external revision rematerializes remaining pending intents onto the new confirmed baseline', async () => {
+  it.each([false, true])('projects new remote values and only rebases a known-unsent intent (uncertain: %s)', async (uncertain) => {
     await repository.transactReplica({
       putRows: [
         {
@@ -901,8 +901,9 @@ describe('OfflineReplicaPullService', () => {
           operation: 'test_items.update',
           payload: { title: 'Local edit' },
           baseRevision: 1,
-          state: 'pending',
-          attempts: 0,
+          state: uncertain ? 'retry_wait' : 'pending',
+          serverCommitUnknown: uncertain,
+          attempts: uncertain ? 1 : 0,
           retryAt: null,
           createdAt: 1,
           lastErrorCode: null,
@@ -922,8 +923,8 @@ describe('OfflineReplicaPullService', () => {
     await expect(repository.getCommands(scope)).resolves.toEqual([
       expect.objectContaining({
         commandId: 'cmd-remaining',
-        state: 'pending',
-        baseRevision: 9,
+        state: uncertain ? 'retry_wait' : 'pending',
+        baseRevision: uncertain ? 1 : 9,
       }),
     ]);
   });

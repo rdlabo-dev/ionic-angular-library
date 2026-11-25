@@ -491,25 +491,24 @@ describe('OfflineSyncService', () => {
     expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['independent', 'first', 'dependent']);
   });
 
-  it('persists the prepared payload before transport and replays it after a lost response', async () => {
-    const prepareTransport = vi.fn((command: OfflineCommand) => ({ payload: { original: command.payload, revision: 7 } }));
-    Object.assign(TestBed.inject(OFFLINE_COMMAND_EXECUTOR), { prepareTransport });
-    const request = documentCreate('doc');
-    const sent = { original: request.payload, revision: 7 };
-    await service.enqueue({ ...request, commandId: 'key' }, { flush: false });
-    execute.mockImplementationOnce(async () => {
-      expect(commands[0]).toMatchObject({ commandId: 'key', state: 'sending', serverCommitUnknown: true, payload: sent });
-      throw new HttpErrorResponse({ status: 0 });
+  it('design invariant: a temporary scheduling read failure allows the very next flush to deliver', async () => {
+    let readFailed = false;
+    Object.assign(TestBed.inject(OFFLINE_COMMAND_EXECUTOR), {
+      blockedByEarlierCommands: (command: OfflineCommand, earlier: readonly OfflineCommand[]) => {
+        if (!readFailed && command.commandId === 'later' && earlier.some((item) => item.state === 'sending')) {
+          readFailed = true;
+          throw new Error('temporary dependency read failure');
+        }
+        return false;
+      },
     });
+    await service.enqueue({ ...documentCreate('a'), commandId: 'now' }, { flush: false });
+    await service.enqueue({ ...documentCreate('b'), commandId: 'later', retryAt: Date.now() + 60_000 }, { flush: false });
     networkConnected = () => true;
     await service.flush();
-    expect(commands[0]).toMatchObject({ state: 'retry_wait', serverCommitUnknown: true, payload: sent });
-    await service.retryNow('key');
-    expect(prepareTransport).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls.map(([command]) => [command.commandId, command.payload])).toEqual([
-      ['key', sent],
-      ['key', sent],
-    ]);
+    expect(readFailed).toBe(true);
+    await service.flush();
+    expect(commands.find((item) => item.commandId === 'now')).toMatchObject({ state: 'awaiting_pull' });
   });
 
   it('only arms a timer for the first unsent command of an aggregate', async () => {
