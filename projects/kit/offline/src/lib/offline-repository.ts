@@ -1,3 +1,4 @@
+import { recoverOfflineCommand } from './offline-command-recovery';
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import { KitStorageService } from '@rdlabo/ionic-angular-kit';
 import {
@@ -443,7 +444,8 @@ export class IonicOfflineRepository implements OfflineRepository {
     return this.#withCommittedRead(() => read(this.#reader()));
   }
 
-  #normalizeCommand(command: OfflineCommand): OfflineCommand {
+  #normalizeCommand(stored: OfflineCommand): OfflineCommand {
+    const command = recoverOfflineCommand(stored);
     if (command.serverCommitUnknown !== undefined) return command;
     const legacyAmbiguousFailure = command.attempts >= 2 && ['blocked_auth', 'conflict', 'rejected'].includes(command.state);
     return command.state === 'sending' || command.state === 'retry_wait' || legacyAmbiguousFailure

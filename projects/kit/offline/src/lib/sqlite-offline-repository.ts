@@ -1,3 +1,4 @@
+import { recoverOfflineCommand } from './offline-command-recovery';
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import {
   canonicalOfflineReplicaIdentity,
@@ -1157,7 +1158,7 @@ export class SqliteOfflineRepository implements OfflineRepository {
   }
 
   #command(row: SQLiteRow): OfflineCommand {
-    return {
+    const command: OfflineCommand = {
       commandId: this.#string(row['command_id']),
       userId: parseOfflinePrincipalId(this.#string(row['user_id'])),
       scopeId: this.#string(row['scope_id']),
@@ -1190,6 +1191,7 @@ export class SqliteOfflineRepository implements OfflineRepository {
         ? {}
         : { reconciliationIdentity: this.#parse(row['reconciliation_identity_json']) as OfflineCommand['reconciliationIdentity'] }),
     };
+    return recoverOfflineCommand(command);
   }
 
   #putCommand(databaseId: string, command: OfflineCommand): Promise<void> {

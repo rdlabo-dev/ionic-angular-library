@@ -86,6 +86,13 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  */
 export const isMaintenanceError = (error: HttpErrorResponse): boolean => error.status === 503 && error.error?.code === 'MAINTENANCE';
 
+/** A write may have committed during this attempt or an earlier attempt with the same key. */
+export function isWriteOutcomeUnknown(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { status, serverCommitUnknown } = error as { status?: number; serverCommitUnknown?: boolean };
+  return serverCommitUnknown === true || status === 0 || status === 408 || (typeof status === 'number' && status >= 500);
+}
+
 /**
  * Parse a `Retry-After` header (delta-seconds or an HTTP-date) into milliseconds, or `null` when it
  * is absent or unparseable.
@@ -539,6 +546,12 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
     return throwError(() => error);
   }
 
+  let uncertainAttempt: HttpErrorResponse | undefined;
+  const preserveWriteOutcome = (error: HttpErrorResponse): HttpErrorResponse => {
+    if (!uncertainAttempt || isWriteOutcomeUnknown(error)) return error;
+    return Object.assign(new HttpErrorResponse({ ...error, url: error.url ?? undefined }), { serverCommitUnknown: true });
+  };
+
   const sendAuthenticated = (outgoing: HttpRequest<unknown>, allowAuthRecovery: boolean): Observable<HttpEvent<unknown>> =>
     from(config.getAuthHeaders(outgoing)).pipe(
       catchError((headerError: unknown) => {
@@ -548,7 +561,9 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
           config.onAuthAccessDenial?.(outgoing, headerError);
         }
         config.onAuthError?.(outgoing, headerError);
-        return throwError(() => headerError);
+        return throwError(() =>
+          headerError instanceof HttpErrorResponse ? preserveWriteOutcome(headerError) : (uncertainAttempt ?? headerError),
+        );
       }),
       mergeMap((authHeaders) => {
         const req = outgoing.clone({ setHeaders: { ...authHeaders, ...config.buildExtraHeaders?.(outgoing) } });
@@ -573,6 +588,7 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
             count: MAX_RETRIES,
             delay: (error: HttpErrorResponse, retryCount: number) =>
               from(Network.getStatus()).pipe(
+                catchError(() => throwError(() => error)),
                 mergeMap((network) => {
                   // Offline → don't wait out the retries; fail fast so offlineFallback can take over.
                   if (!network.connected) {
@@ -586,6 +602,7 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
                   // Short linear backoff (500ms, 1000ms, …) plus jitter to de-correlate a fleet of
                   // clients reconnecting at once; the server's Retry-After wins when present.
                   const backoff = parseRetryAfterMs(error) ?? retryCount * 500 + Math.random() * 250;
+                  if (!RETRYABLE_METHODS.includes(req.method) && isWriteOutcomeUnknown(error)) uncertainAttempt = error;
                   return timer(backoff);
                 }),
               ),
@@ -595,7 +612,8 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
               config.onResponse?.(event);
             }
           }),
-          catchError((error: HttpErrorResponse) => {
+          catchError((failure: HttpErrorResponse) => {
+            const error = preserveWriteOutcome(failure);
             const mayRecover =
               allowAuthRecovery &&
               isExplicitAuthDenial(error) &&

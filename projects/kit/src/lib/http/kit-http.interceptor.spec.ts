@@ -62,9 +62,10 @@ function runInterceptor(req: HttpRequest<unknown>, next: (r: HttpRequest<unknown
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+afterEach(() => vi.useRealTimers());
+
 describe('kitAuthInterceptor', () => {
   afterEach(() => {
-    vi.useRealTimers();
     TestBed.resetTestingModule();
   });
 
@@ -825,6 +826,76 @@ describe('kitAuthInterceptor — retry policy & classification', () => {
 
   const postReq = new HttpRequest<unknown>('POST', '/api/save', {});
   const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it.each([408, 429])('preserves the outcome of a keyed write after %i followed by two 429s', async (firstStatus) => {
+    const config = makeConfig();
+    setupInterceptor(config);
+    const headers = new HttpHeaders({ 'Retry-After': '0' });
+    const req = postReq.clone({ setHeaders: { 'Idempotency-Key': 'same-write' } });
+    const statuses = [firstStatus, 429, 429];
+    const failure = await firstValueFrom(
+      runInterceptor(req, () => throwError(() => new HttpErrorResponse({ status: statuses.shift(), headers }))),
+    ).catch((error: HttpErrorResponse & { serverCommitUnknown?: boolean }) => error);
+    expect(statuses).toEqual([]);
+    expect(config.offlineFallback).toHaveBeenCalledWith(expect.any(HttpRequest), failure);
+    expect(failure).toBeInstanceOf(HttpErrorResponse);
+    expect(failure).toMatchObject({ status: 429, headers });
+    expect((failure as { serverCommitUnknown?: boolean }).serverCommitUnknown === true).toBe(firstStatus === 408);
+  });
+
+  it('propagates the fallback storage failure unchanged after a lost response', async () => {
+    const storageError = new Error('Outbox is full');
+    const config = makeConfig({ offlineFallback: () => throwError(() => storageError) });
+    setupInterceptor(config);
+    const req = postReq.clone({ setHeaders: { 'Idempotency-Key': 'same-write' } });
+    const statuses = [408, 429, 429];
+    const headers = new HttpHeaders({ 'Retry-After': '0' });
+    await expect(
+      firstValueFrom(runInterceptor(req, () => throwError(() => new HttpErrorResponse({ status: statuses.shift(), headers })))),
+    ).rejects.toBe(storageError);
+    expect(statuses).toEqual([]);
+  });
+
+  it('retains an uncertain write if auth headers fail before its replay', async () => {
+    const config = makeConfig({
+      getAuthHeaders: vi
+        .fn()
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new HttpErrorResponse({ status: 403 })),
+      recoverAuthAccess: vi.fn().mockResolvedValue(true),
+    });
+    setupInterceptor(config);
+    const req = postReq.clone({ setHeaders: { 'Idempotency-Key': 'original-key' } });
+    const statuses = [408, 401];
+    const headers = new HttpHeaders({ 'Retry-After': '0' });
+    await expect(
+      firstValueFrom(runInterceptor(req, () => throwError(() => new HttpErrorResponse({ status: statuses.shift(), headers })))),
+    ).rejects.toMatchObject({ status: 403, serverCommitUnknown: true });
+    expect(config.recoverAuthAccess).toHaveBeenCalledOnce();
+  });
+
+  it('honors a keyed write retry deadline longer than one request timeout', async () => {
+    vi.useFakeTimers();
+    setupInterceptor(makeConfig());
+    const req = postReq.clone({ setHeaders: { 'Idempotency-Key': 'original-key' } });
+    const error = new HttpErrorResponse({ status: 429, headers: new HttpHeaders({ 'Retry-After': '61' }) });
+    let attempts = 0;
+    const response = new HttpResponse({ status: 200 });
+    const result = firstValueFrom(
+      runInterceptor(
+        req,
+        () =>
+          new Observable((subscriber) => {
+            if (++attempts === 1) subscriber.error(error);
+            else subscriber.next(response);
+          }),
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(60_999);
+    expect(attempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toBe(response);
+  });
 
   it('does NOT retry a non-idempotent POST even on a retryable status (502)', async () => {
     setupInterceptor(makeConfig());

@@ -1,3 +1,4 @@
+import { isWriteOutcomeUnknown } from '@rdlabo/ionic-angular-kit';
 import { computed, effect, ErrorHandler, inject, Injectable, InjectionToken, signal, untracked } from '@angular/core';
 import {
   OFFLINE_COMMAND_EXECUTOR,
@@ -1738,7 +1739,7 @@ export class OfflineSyncService {
     if (status === 409 || status === 412) {
       return { ...command, state: 'conflict', lastErrorCode: String(status), serverCommitUnknown };
     }
-    if (status >= 400 && status < 500 && status !== 429) {
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
       return { ...command, state: 'rejected', lastErrorCode: String(status), serverCommitUnknown };
     }
     const retryAt = Date.now() + offlineRetryDelayMs(command.attempts, this.#retryRandom);
@@ -1790,7 +1791,7 @@ export class OfflineSyncService {
 
   #serverCommitCouldBeUnknown(error: unknown): boolean {
     const status = this.#errorStatus(error);
-    return status === 0 || status === 429 || status >= 500;
+    return status === 0 || status === 429 || isWriteOutcomeUnknown(error);
   }
 
   #reportError(error: unknown): void {

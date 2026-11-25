@@ -3886,6 +3886,8 @@ describe('OfflineSyncService', () => {
     [401, 'blocked_auth', 'blocked_auth'],
     [409, 'conflict', 'conflict'],
     [422, 'rejected', 'rejected'],
+    [408, 'retry_wait', 'pending'],
+    [429, 'retry_wait', 'pending'],
     [500, 'retry_wait', 'pending'],
   ] as const)('HTTP %sを%sへ分類して操作を保持する', async (status, state, rowSyncState) => {
     execute.mockRejectedValueOnce({ status });
@@ -3901,7 +3903,11 @@ describe('OfflineSyncService', () => {
     );
     connected.set(true);
     await service.flush();
-    expect(service.pendingCommands()[0]).toMatchObject({ state, lastErrorCode: String(status) });
+    expect(service.pendingCommands()[0]).toMatchObject({
+      state,
+      lastErrorCode: String(status),
+      serverCommitUnknown: [408, 429, 500].includes(status),
+    });
     expect(rows[0]?.syncState).toBe(rowSyncState);
   });
 

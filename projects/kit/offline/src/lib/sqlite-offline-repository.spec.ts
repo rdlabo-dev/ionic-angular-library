@@ -1241,6 +1241,10 @@ describe('SqliteOfflineRepository community sqlite driver', () => {
         reconciliationIdentity: { remoteId: 42 },
       }),
     ]);
+    plugin.query.mockResolvedValueOnce({ rows: [{ ...sqliteRow, state: 'rejected', last_error_code: '408' }] });
+    await expect(repository.getCommands({ userId: 1, scopeId: '10' })).resolves.toEqual([
+      expect.objectContaining({ commandId: command.commandId, payload: command.payload, state: 'retry_wait', serverCommitUnknown: true }),
+    ]);
     plugin.query.mockResolvedValueOnce({ rows: [{ ...sqliteRow, local_only_footprint_json: null }] });
     await expect(repository.getCommands({ userId: 1, scopeId: '10' })).resolves.toEqual([
       expect.not.objectContaining({ localOnlyFootprint: expect.anything() }),
