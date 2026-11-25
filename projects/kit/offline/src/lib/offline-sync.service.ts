@@ -1277,7 +1277,8 @@ export class OfflineSyncService {
       throw failures[0];
     }
     if (this.#isCurrent(generation)) {
-      for (const command of await this.#readKnownCommands()) {
+      // Use the snapshot that armed the retry timer; another async read here can swallow its wake-up.
+      for (const command of this.#commands()) {
         if (command.state !== 'awaiting_pull') continue;
         const scope = { userId: command.userId, scopeId: command.scopeId };
         this.#pendingPullScopes.set(this.#scopeKey(scope), scope);

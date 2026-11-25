@@ -416,6 +416,35 @@ describe('OfflineSyncService', () => {
     expect(execute.mock.calls[1]?.[0]).toMatchObject({ commandId: request.commandId, payload: request.payload, attempts: 2 });
   });
 
+  it('automatically sends a write whose deadline passes during another aggregate’s post-send pull', async () => {
+    vi.useFakeTimers();
+    const retryAt = Date.now() + 10_000;
+    for (const id of ['later', 'now']) {
+      await service.enqueue(
+        {
+          commandId: id,
+          scopeId: '10',
+          aggregateType: 'documents',
+          identity: { kind: 'generated', localId: id },
+          operation: 'documents.create',
+          payload: { title: id },
+          retryAt: id === 'later' ? retryAt : undefined,
+        },
+        { flush: false },
+      );
+    }
+    TestBed.tick();
+    networkConnected = () => true;
+    pull.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+      vi.setSystemTime(retryAt + 1);
+      beforeGetCommands = () => new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    const firstFlush = service.flush();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await firstFlush;
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['now', 'later']);
+  });
+
   it('only arms a timer for the first unsent command of an aggregate', async () => {
     vi.useFakeTimers();
     const request = {

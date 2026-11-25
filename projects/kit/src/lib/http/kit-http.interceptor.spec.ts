@@ -9,6 +9,7 @@ import {
   KIT_SKIP_ERROR_NOTIFICATIONS,
   KIT_AUTH_BOOTSTRAP_REQUEST,
   kitAuthInterceptor,
+  isWriteOutcomeUnknown,
   provideKitHttp,
   type KitHttpConfig,
 } from './kit-http.interceptor';
@@ -895,6 +896,26 @@ describe('kitAuthInterceptor — retry policy & classification', () => {
     expect(attempts).toBe(1);
     await vi.advanceTimersByTimeAsync(1);
     await expect(result).resolves.toBe(response);
+  });
+
+  it('returns a Retry-After beyond the timer limit with the earlier keyed write outcome', async () => {
+    setupInterceptor(makeConfig());
+    const req = postReq.clone({ setHeaders: { 'Idempotency-Key': 'same-write' } });
+    const timeout = new HttpErrorResponse({ status: 408, headers: new HttpHeaders({ 'Retry-After': '0' }) });
+    const limited = new HttpErrorResponse({ status: 429, headers: new HttpHeaders({ 'Retry-After': '2592000' }) });
+    let attempts = 0;
+    const error = await firstValueFrom(
+      runInterceptor(
+        req,
+        () =>
+          new Observable((subscriber) => {
+            subscriber.error(++attempts === 1 ? timeout : limited);
+          }),
+      ),
+    ).catch((failure: HttpErrorResponse) => failure);
+    expect(attempts).toBe(2);
+    expect(error).toMatchObject({ status: 429, headers: limited.headers });
+    expect(isWriteOutcomeUnknown(error)).toBe(true);
   });
 
   it('does NOT retry a non-idempotent POST even on a retryable status (502)', async () => {

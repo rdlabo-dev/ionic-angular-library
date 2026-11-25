@@ -90,7 +90,7 @@ export const appConfig: ApplicationConfig = {
 };
 ```
 
-Automatic retry is limited to `GET`, `HEAD`, `OPTIONS`, or requests carrying an `Idempotency-Key`. Ordinary writes are never retried automatically. Retries cover transient statuses `0`, `408`, `429`, `502`, `503`, and `504`, and honor `Retry-After`.
+Automatic retry is limited to `GET`, `HEAD`, `OPTIONS`, or requests carrying an `Idempotency-Key`. Ordinary writes are never retried automatically. Retries cover transient statuses `0`, `408`, `429`, `502`, `503`, and `504`, and honor `Retry-After`. When the requested delay exceeds the platform timer limit (2,147,483,647 ms, about 24.9 days), the interceptor returns the HTTP error with its header so the caller can schedule a durable retry.
 
 For keyed writes, `isWriteOutcomeUnknown(error)` is true for a lost response, timeout, or server error, including when a later retry returns a different HTTP status. Reuse the original key and payload when retrying such a write.
 
