@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core';
-import type { OfflineCommand, OfflineScope } from './offline-repository';
+import type { OfflineCommand, OfflineRepositoryReader, OfflineScope } from './offline-repository';
 import type { OfflineCommandIdentity, OfflinePrincipalId, OfflineReplicaIdentity } from './offline-identity';
 import type { OfflineGeneratedRemoteId, OfflineNaturalKey } from './offline-replica-schema';
 
@@ -33,6 +33,20 @@ export type OfflineCommandTarget =
 
 /** Product adapter that sends commands and projects acknowledgements into entities. */
 export interface OfflineCommandExecutor {
+  /**
+   * Defers a send while an earlier, unacknowledged command in another aggregate must finish first.
+   * Called when claiming a command and when scheduling retry deadlines. Only read through the supplied reader.
+   */
+  blockedByEarlierCommands?(
+    command: OfflineCommand,
+    earlier: readonly OfflineCommand[],
+    reader: OfflineRepositoryReader,
+  ): boolean | Promise<boolean>;
+  /**
+   * Prepares the payload for a command with no uncertain prior commit. Kit persists it before transport and
+   * replays it unchanged if a previous attempt might have committed.
+   */
+  prepareTransport?(command: OfflineCommand): { payload: unknown };
   /** Sends the command using `command.commandId` as its durable server-side idempotency key. */
   execute(command: OfflineCommand, target: OfflineCommandTarget): Promise<OfflineCommandResult>;
   /**

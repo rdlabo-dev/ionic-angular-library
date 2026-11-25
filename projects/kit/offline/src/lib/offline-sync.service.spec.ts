@@ -469,6 +469,49 @@ describe('OfflineSyncService', () => {
     expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['now', 'later']);
   });
 
+  it('waits for an earlier related aggregate without waking early or delaying other work', async () => {
+    vi.useFakeTimers();
+    const deadline = Date.now() + 60_000;
+    Object.assign(TestBed.inject(OFFLINE_COMMAND_EXECUTOR), {
+      blockedByEarlierCommands: (command: OfflineCommand, earlier: readonly OfflineCommand[]) =>
+        command.commandId === 'dependent' && earlier.some((item) => item.commandId === 'first'),
+    });
+    await service.enqueue({ ...documentCreate('a'), commandId: 'first', retryAt: deadline }, { flush: false });
+    await service.enqueue({ ...documentCreate('b'), commandId: 'dependent', retryAt: deadline - 59_000 }, { flush: false });
+    await service.enqueue({ ...documentCreate('c'), commandId: 'independent' }, { flush: false });
+    networkConnected = () => true;
+    TestBed.tick();
+    await service.flush();
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['independent']);
+    const pulls = pull.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(pull).toHaveBeenCalledTimes(pulls);
+    expect(commands.find((command) => command.commandId === 'dependent')).toMatchObject({ state: 'retry_wait', attempts: 0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['independent', 'first', 'dependent']);
+  });
+
+  it('persists the prepared payload before transport and replays it after a lost response', async () => {
+    const prepareTransport = vi.fn((command: OfflineCommand) => ({ payload: { original: command.payload, revision: 7 } }));
+    Object.assign(TestBed.inject(OFFLINE_COMMAND_EXECUTOR), { prepareTransport });
+    const request = documentCreate('doc');
+    const sent = { original: request.payload, revision: 7 };
+    await service.enqueue({ ...request, commandId: 'key' }, { flush: false });
+    execute.mockImplementationOnce(async () => {
+      expect(commands[0]).toMatchObject({ commandId: 'key', state: 'sending', serverCommitUnknown: true, payload: sent });
+      throw new HttpErrorResponse({ status: 0 });
+    });
+    networkConnected = () => true;
+    await service.flush();
+    expect(commands[0]).toMatchObject({ state: 'retry_wait', serverCommitUnknown: true, payload: sent });
+    await service.retryNow('key');
+    expect(prepareTransport).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls.map(([command]) => [command.commandId, command.payload])).toEqual([
+      ['key', sent],
+      ['key', sent],
+    ]);
+  });
+
   it('only arms a timer for the first unsent command of an aggregate', async () => {
     vi.useFakeTimers();
     const request = documentCreate('one-document');

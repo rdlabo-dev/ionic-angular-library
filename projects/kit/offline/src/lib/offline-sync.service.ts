@@ -1985,11 +1985,11 @@ export class OfflineSyncService {
     this.#pullAttentions.set(attentions);
     let nextRetry: number | null = null;
     for (const [head] of this.#unsentAggregateGroups(commands)) {
-      if (head.state === 'retry_wait' && head.retryAt !== null) {
+      if (head.state === 'retry_wait' && head.retryAt !== null && !(await this.#blockedByEarlier(head, repository, commands))) {
         nextRetry = Math.min(nextRetry ?? head.retryAt, head.retryAt);
       }
     }
-    this.#scheduleRetry(nextRetry);
+    if (this.#isCurrent(generation) && this.#commands() === commands) this.#scheduleRetry(nextRetry);
   }
 
   #scheduleRetry(retryAt: number | null): void {
@@ -2038,12 +2038,23 @@ export class OfflineSyncService {
     );
   }
 
+  async #blockedByEarlier(command: OfflineCommand, repository: OfflineRepository, known?: readonly OfflineCommand[]): Promise<boolean> {
+    if (!this.#executor.blockedByEarlierCommands) return false;
+    const key = this.#aggregateKey(command);
+    const earlier = (known ?? (await this.#readKnownCommands(repository))).filter(
+      (item) => item.state !== 'awaiting_pull' && compareOfflineCommands(item, command) < 0 && this.#aggregateKey(item) !== key,
+    );
+    return earlier.length > 0 && this.#executor.blockedByEarlierCommands(command, earlier, repository);
+  }
+
   #claimSendingCommand(command: OfflineCommand, generation: number): Promise<OfflineCommand | null> {
     const transition = this.#serializeReplicaMutation(async (repository) => {
       if (!this.#isCurrent(generation)) return null;
       const scope = { userId: command.userId, scopeId: command.scopeId };
       const current = (await repository.getCommands(scope)).find((candidate) => candidate.commandId === command.commandId);
       if (!current || !canSendOfflineCommand(current)) return null;
+      if (await this.#blockedByEarlier(current, repository)) return null;
+      if (!this.#isCurrent(generation)) return null;
       const sending: OfflineCommand = {
         ...current,
         state: 'sending',
@@ -2051,6 +2062,9 @@ export class OfflineSyncService {
         retryAt: null,
         lastErrorCode: null,
       };
+      if (!sending.serverCommitUnknown && this.#executor.prepareTransport) {
+        sending.payload = this.#executor.prepareTransport(sending).payload;
+      }
       await repository.putCommand(sending);
       return sending;
     });
