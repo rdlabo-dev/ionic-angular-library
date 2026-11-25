@@ -1,3 +1,4 @@
+import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { ErrorHandler, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -380,6 +381,77 @@ describe('OfflineSyncService', () => {
     ).rejects.toThrow('read-only cache');
     expect(commands).toEqual([]);
     expect(rows).toEqual([]);
+  });
+
+  it('persists an uncertain handoff and waits for the original deadline before replay', async () => {
+    vi.useFakeTimers();
+    const retryAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    execute.mockRejectedValueOnce(new HttpErrorResponse({ status: 429, headers: new HttpHeaders({ 'Retry-After': '30' }) }));
+    const request = {
+      commandId: 'original-key',
+      scopeId: '10',
+      aggregateType: 'documents',
+      identity: { kind: 'generated' as const, localId: 'uncertain-document' },
+      operation: 'documents.create',
+      payload: { title: 'original' },
+      serverCommitUnknown: true,
+      retryAt,
+    };
+    await service.enqueuePrepared(async () => ({ request }));
+    expect(commands).toMatchObject([
+      { commandId: request.commandId, payload: request.payload, state: 'retry_wait', serverCommitUnknown: true, retryAt, attempts: 0 },
+    ]);
+    await expect(service.discard(request.commandId)).rejects.toBeInstanceOf(OfflineCommandInFlightError);
+    connected.set(true);
+    await service.flush();
+    await vi.advanceTimersByTimeAsync(retryAt - Date.now() - 1);
+    expect(execute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({ commandId: request.commandId, payload: request.payload, attempts: 1 });
+    expect(commands).toMatchObject([{ state: 'retry_wait', retryAt: retryAt + 30_000, serverCommitUnknown: true }]);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({ commandId: request.commandId, payload: request.payload, attempts: 2 });
+  });
+
+  it('only arms a timer for the first unsent command of an aggregate', async () => {
+    vi.useFakeTimers();
+    const request = {
+      scopeId: '10',
+      aggregateType: 'documents',
+      identity: { kind: 'generated' as const, localId: 'one-document' },
+      operation: 'documents.create',
+      payload: { title: 'document' },
+    };
+    await service.enqueue({ ...request, commandId: 'first', retryAt: Date.now() + 60_000 }, { flush: false });
+    await service.enqueue({ ...request, commandId: 'second', retryAt: Date.now() + 1_000 }, { flush: false });
+    networkConnected = () => true;
+    TestBed.tick();
+    await service.flush();
+    pull.mockClear();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(pull).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['first', 'second']);
+  });
+
+  it('rejects unsafe handoff metadata before committing the command or its optimistic row', async () => {
+    const request = {
+      scopeId: '10',
+      aggregateType: 'documents',
+      identity: { kind: 'generated' as const, localId: 'draft' },
+      operation: 'documents.create',
+      payload: { title: 'draft' },
+    };
+    await expect(service.enqueue({ ...request, serverCommitUnknown: true })).rejects.toThrow('original commandId');
+    await expect(service.enqueue({ ...request, retryAt: Infinity })).rejects.toThrow('retryAt');
+    expect(commands).toEqual([]);
+    expect(rows).toEqual([]);
+    await service.enqueue({ ...request, retryAt: Date.now() - 1 }, { flush: false });
+    expect(commands).toMatchObject([{ state: 'pending', retryAt: null, attempts: 0 }]);
   });
 
   it('uses a caller-owned idempotency key once and rejects a duplicate command id before persistence', async () => {

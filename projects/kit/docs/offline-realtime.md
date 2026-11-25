@@ -107,6 +107,8 @@ An `OfflineRequestPolicy` resolves a matched GET to `kind: 'read'`, a `readLocal
 
 Mutation policies prepare the optimistic `HttpResponse`; the product implementation should enqueue the corresponding durable intent before returning it. `enqueue()` generates a UUID by default. Supply a stable `commandId` when product code must correlate the durable intent with surrounding work or immediately send a newly created generated identity. Kit preserves that ID across transport retries.
 
+When a foreground write may already have reached the server, enqueue the original payload with its original `commandId` and `serverCommitUnknown: true`. Pass `retryAt` as an absolute Unix timestamp in milliseconds when the server has requested a delay. Kit persists both values in the same transaction as the optimistic change.
+
 ```ts
 import type { OfflineGeneratedCommandLocator } from '@rdlabo/ionic-angular-kit/offline';
 

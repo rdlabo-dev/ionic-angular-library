@@ -96,10 +96,8 @@ export function isWriteOutcomeUnknown(error: unknown): boolean {
 /**
  * Parse a `Retry-After` header (delta-seconds or an HTTP-date) into milliseconds, or `null` when it
  * is absent or unparseable.
- *
- * @internal
  */
-const parseRetryAfterMs = (error: HttpErrorResponse): number | null => {
+export const parseRetryAfterMs = (error: HttpErrorResponse): number | null => {
   const header = error.headers?.get('Retry-After');
   if (!header) {
     return null;

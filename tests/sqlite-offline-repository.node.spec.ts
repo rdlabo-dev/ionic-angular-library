@@ -137,7 +137,7 @@ describe('SqliteOfflineRepository real SQLite contract', () => {
       fetchedAt: 1,
       syncState: 'confirmed',
     };
-    const command = outboxCommand();
+    const command = outboxCommand({ state: 'retry_wait', retryAt: 2_200_000_000_000, serverCommitUnknown: true });
 
     await repository.transactReplica({
       putRows: [row],
