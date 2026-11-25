@@ -785,7 +785,7 @@ export class OfflineSyncService {
       removeCommandIds: effectiveRemoveCommandIds,
     });
     await this.#refreshState(generation, repository).catch((error) => this.#reportError(error));
-    if (options.flush !== false && this.#canSynchronize()) this.#flushInBackground();
+    if (options.flush !== false) this.#flushAfterMutation(generation);
   }
 
   #normalizedLocalOnlyFootprint(
@@ -944,6 +944,13 @@ export class OfflineSyncService {
     }
   }
 
+  #flushAfterMutation(generation: number): void {
+    if (!this.#isCurrent(generation) || !this.#canSynchronize()) return;
+    // The active flush may already have finished its send loop.
+    if (this.#flushPromise) this.#resumeAfterFlush = true;
+    else this.#flushInBackground();
+  }
+
   #flushInBackground(): void {
     void this.#beginFlush(false).catch((error) => this.#reportError(error));
   }
@@ -997,12 +1004,7 @@ export class OfflineSyncService {
       )
       .finally(() => {
         this.#flushTransitions.delete(transition);
-        if (requiresReconciliation && this.#canSynchronize() && this.#isCurrentUser(generation, userId)) {
-          // A normal flush may already be in its post-pull phase. Ensure the
-          // newly acknowledged command receives a later reconciliation pass.
-          if (this.#flushPromise) this.#resumeAfterFlush = true;
-          queueMicrotask(() => this.#flushInBackground());
-        }
+        if (requiresReconciliation && this.#isCurrentUser(generation, userId)) this.#flushAfterMutation(generation);
       });
     this.#flushTransitions.add(transition);
     return result;
@@ -1139,18 +1141,23 @@ export class OfflineSyncService {
       return this.#flushPromise;
     }
     const generation = this.#generation;
-    const promise = this.#runFlush(generation, explicitFull).finally(() => {
+    const finish = (succeeded: boolean): void => {
       this.#flushTransitions.delete(promise);
-      if (this.#flushPromise === promise) {
-        this.#flushPromise = null;
-        this.#partialFlushInFlight = false;
-      }
-      const resumeAfterFlush = this.#resumeAfterFlush;
+      if (this.#flushPromise !== promise) return;
+      this.#flushPromise = null;
+      this.#partialFlushInFlight = false;
+      const resume = this.#resumeAfterFlush;
       this.#resumeAfterFlush = false;
-      if (resumeAfterFlush && this.#canSynchronize()) {
-        queueMicrotask(() => this.#flushInBackground());
-      }
-    });
+      // A full flush already chained to this partial flush will pick up the new work.
+      if (succeeded && resume && !(isPartial && this.#chainedFullFlush)) this.#flushAfterMutation(generation);
+    };
+    const promise: Promise<void> = this.#runFlush(generation, explicitFull).then(
+      () => finish(true),
+      (error: unknown) => {
+        finish(false);
+        throw error;
+      },
+    );
     this.#flushLifecycleRevision = lifecycleRevision;
     this.#flushPromise = promise;
     this.#partialFlushInFlight = isPartial;

@@ -416,6 +416,44 @@ describe('OfflineSyncService', () => {
     expect(execute.mock.calls[1]?.[0]).toMatchObject({ commandId: request.commandId, payload: request.payload, attempts: 2 });
   });
 
+  it.each(['success', 'auth failure', 'session revoked'] as const)(
+    'handles new writes queued during a post-send pull on %s',
+    async (outcome) => {
+      vi.useFakeTimers();
+      const request = (id: string) => ({
+        commandId: id,
+        scopeId: '10',
+        aggregateType: 'documents',
+        identity: { kind: 'generated' as const, localId: id },
+        operation: 'documents.create',
+        payload: { title: id },
+      });
+      await service.enqueue(request('first'), { flush: false });
+      TestBed.tick();
+      networkConnected = () => true;
+      let pulled!: () => void;
+      let release!: () => void;
+      const pulling = new Promise<void>((resolve) => (pulled = resolve));
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      pull.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+        pulled();
+        await gate;
+        if (outcome === 'auth failure') throw { status: 401 };
+      });
+      const flush = service.flush();
+      await pulling;
+      await service.enqueue({ ...request('handoff'), serverCommitUnknown: true });
+      const pullsBeforeResume = pull.mock.calls.length;
+      if (outcome === 'session revoked') service.revokeSession();
+      release();
+      if (outcome === 'auth failure') await expect(flush).rejects.toMatchObject({ status: 401 });
+      else await flush;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(outcome === 'success' ? ['first', 'handoff'] : ['first']);
+      if (outcome !== 'success') expect(pull).toHaveBeenCalledTimes(pullsBeforeResume);
+    },
+  );
+
   it('automatically sends a write whose deadline passes during another aggregate’s post-send pull', async () => {
     vi.useFakeTimers();
     const retryAt = Date.now() + 10_000;
@@ -6525,9 +6563,19 @@ describe('OfflineSyncService', () => {
       await vi.waitFor(() => expect(pull).toHaveBeenCalledWith({ userId: 1, scopeId: '10' }));
 
       const fullFlush = service.flush();
+      await service.enqueue({
+        commandId: 'queued-during-partial',
+        scopeId: '20',
+        aggregateType: 'documents',
+        identity: { kind: 'generated', localId: 'document-20' },
+        operation: 'documents.create',
+        payload: { title: 'queued' },
+        serverCommitUnknown: true,
+      });
       releaseForegroundPull?.();
       await fullFlush;
 
+      expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['queued-during-partial']);
       expect(pull).toHaveBeenCalledWith({ userId: 1, scopeId: '20' });
       expect(pull).toHaveBeenCalledWith({ userId: 1, scopeId: '30' });
     });
