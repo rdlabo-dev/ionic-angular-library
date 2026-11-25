@@ -96,10 +96,8 @@ export function isWriteOutcomeUnknown(error: unknown): boolean {
 /**
  * Parse a `Retry-After` header (delta-seconds or an HTTP-date) into milliseconds, or `null` when it
  * is absent or unparseable.
- *
- * @internal
  */
-const parseRetryAfterMs = (error: HttpErrorResponse): number | null => {
+export const parseRetryAfterMs = (error: HttpErrorResponse): number | null => {
   const header = error.headers?.get('Retry-After');
   if (!header) {
     return null;
@@ -602,6 +600,8 @@ export const kitAuthInterceptor: HttpInterceptorFn = (request, next) => {
                   // Short linear backoff (500ms, 1000ms, …) plus jitter to de-correlate a fleet of
                   // clients reconnecting at once; the server's Retry-After wins when present.
                   const backoff = parseRetryAfterMs(error) ?? retryCount * 500 + Math.random() * 250;
+                  // A native timer cannot honor a longer delay. Surface the response so a durable queue can.
+                  if (backoff > 2_147_483_647) return throwError(() => error);
                   if (!RETRYABLE_METHODS.includes(req.method) && isWriteOutcomeUnknown(error)) uncertainAttempt = error;
                   return timer(backoff);
                 }),

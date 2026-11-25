@@ -1,3 +1,4 @@
+import { HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { ErrorHandler, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -155,6 +156,16 @@ describe('OfflineSyncService', () => {
     }),
   );
   const provesCommandNotCommitted = vi.fn((_error: unknown, _command: OfflineCommand) => false);
+
+  function documentCreate(localId: string) {
+    return {
+      scopeId: '10',
+      aggregateType: 'documents',
+      identity: generatedCommandIdentity(localId),
+      operation: 'documents.create',
+      payload: { title: localId },
+    };
+  }
 
   function expectAwaitingPull(count = commands.length): void {
     expect(commands).toHaveLength(count);
@@ -380,6 +391,108 @@ describe('OfflineSyncService', () => {
     ).rejects.toThrow('read-only cache');
     expect(commands).toEqual([]);
     expect(rows).toEqual([]);
+  });
+
+  it('persists an uncertain handoff and waits for the original deadline before replay', async () => {
+    vi.useFakeTimers();
+    const retryAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    execute.mockRejectedValueOnce(new HttpErrorResponse({ status: 429, headers: new HttpHeaders({ 'Retry-After': '30' }) }));
+    const request = {
+      commandId: 'original-key',
+      ...documentCreate('original'),
+      serverCommitUnknown: true,
+      retryAt,
+    };
+    await service.enqueuePrepared(async () => ({ request }));
+    expect(commands).toMatchObject([
+      { commandId: request.commandId, payload: request.payload, state: 'retry_wait', serverCommitUnknown: true, retryAt, attempts: 0 },
+    ]);
+    await expect(service.discard(request.commandId)).rejects.toBeInstanceOf(OfflineCommandInFlightError);
+    connected.set(true);
+    await service.flush();
+    await vi.advanceTimersByTimeAsync(retryAt - Date.now() - 1);
+    expect(execute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({ commandId: request.commandId, payload: request.payload, attempts: 1 });
+    expect(commands).toMatchObject([{ state: 'retry_wait', retryAt: retryAt + 30_000, serverCommitUnknown: true }]);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({ commandId: request.commandId, payload: request.payload, attempts: 2 });
+  });
+
+  it.each(['success', 'auth failure', 'session revoked'] as const)(
+    'handles new writes queued during a post-send pull on %s',
+    async (outcome) => {
+      vi.useFakeTimers();
+      await service.enqueue({ ...documentCreate('first'), commandId: 'first' }, { flush: false });
+      TestBed.tick();
+      networkConnected = () => true;
+      let pulled!: () => void;
+      let release!: () => void;
+      const pulling = new Promise<void>((resolve) => (pulled = resolve));
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      pull.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+        pulled();
+        await gate;
+        if (outcome === 'auth failure') throw { status: 401 };
+      });
+      const flush = service.flush();
+      await pulling;
+      await service.enqueue({ ...documentCreate('handoff'), commandId: 'handoff', serverCommitUnknown: true });
+      const pullsBeforeResume = pull.mock.calls.length;
+      if (outcome === 'session revoked') service.revokeSession();
+      release();
+      if (outcome === 'auth failure') await expect(flush).rejects.toMatchObject({ status: 401 });
+      else await flush;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(outcome === 'success' ? ['first', 'handoff'] : ['first']);
+      if (outcome !== 'success') expect(pull).toHaveBeenCalledTimes(pullsBeforeResume);
+    },
+  );
+
+  it('automatically sends a write whose deadline passes during another aggregate’s post-send pull', async () => {
+    vi.useFakeTimers();
+    const retryAt = Date.now() + 10_000;
+    await service.enqueue({ ...documentCreate('later'), commandId: 'later', retryAt }, { flush: false });
+    await service.enqueue({ ...documentCreate('now'), commandId: 'now' }, { flush: false });
+    TestBed.tick();
+    networkConnected = () => true;
+    pull.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+      vi.setSystemTime(retryAt + 1);
+      beforeGetCommands = () => new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    const firstFlush = service.flush();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await firstFlush;
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['now', 'later']);
+  });
+
+  it('only arms a timer for the first unsent command of an aggregate', async () => {
+    vi.useFakeTimers();
+    const request = documentCreate('one-document');
+    await service.enqueue({ ...request, commandId: 'first', retryAt: Date.now() + 60_000 }, { flush: false });
+    await service.enqueue({ ...request, commandId: 'second', retryAt: Date.now() + 1_000 }, { flush: false });
+    networkConnected = () => true;
+    TestBed.tick();
+    await service.flush();
+    pull.mockClear();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(pull).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['first', 'second']);
+  });
+
+  it('rejects unsafe handoff metadata before committing the command or its optimistic row', async () => {
+    const request = documentCreate('draft');
+    await expect(service.enqueue({ ...request, serverCommitUnknown: true })).rejects.toThrow('original commandId');
+    await expect(service.enqueue({ ...request, retryAt: Infinity })).rejects.toThrow('retryAt');
+    expect(commands).toEqual([]);
+    expect(rows).toEqual([]);
+    await service.enqueue({ ...request, retryAt: Date.now() - 1 }, { flush: false });
+    expect(commands).toMatchObject([{ state: 'pending', retryAt: null, attempts: 0 }]);
   });
 
   it('uses a caller-owned idempotency key once and rejects a duplicate command id before persistence', async () => {
@@ -6424,9 +6537,16 @@ describe('OfflineSyncService', () => {
       await vi.waitFor(() => expect(pull).toHaveBeenCalledWith({ userId: 1, scopeId: '10' }));
 
       const fullFlush = service.flush();
+      await service.enqueue({
+        commandId: 'queued-during-partial',
+        ...documentCreate('document-20'),
+        scopeId: '20',
+        serverCommitUnknown: true,
+      });
       releaseForegroundPull?.();
       await fullFlush;
 
+      expect(execute.mock.calls.map(([command]) => command.commandId)).toEqual(['queued-during-partial']);
       expect(pull).toHaveBeenCalledWith({ userId: 1, scopeId: '20' });
       expect(pull).toHaveBeenCalledWith({ userId: 1, scopeId: '30' });
     });
