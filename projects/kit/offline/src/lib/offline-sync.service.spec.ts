@@ -157,6 +157,16 @@ describe('OfflineSyncService', () => {
   );
   const provesCommandNotCommitted = vi.fn((_error: unknown, _command: OfflineCommand) => false);
 
+  function documentCreate(localId: string) {
+    return {
+      scopeId: '10',
+      aggregateType: 'documents',
+      identity: generatedCommandIdentity(localId),
+      operation: 'documents.create',
+      payload: { title: localId },
+    };
+  }
+
   function expectAwaitingPull(count = commands.length): void {
     expect(commands).toHaveLength(count);
     expect(commands.every((command) => command.state === 'awaiting_pull')).toBe(true);
@@ -389,11 +399,7 @@ describe('OfflineSyncService', () => {
     execute.mockRejectedValueOnce(new HttpErrorResponse({ status: 429, headers: new HttpHeaders({ 'Retry-After': '30' }) }));
     const request = {
       commandId: 'original-key',
-      scopeId: '10',
-      aggregateType: 'documents',
-      identity: { kind: 'generated' as const, localId: 'uncertain-document' },
-      operation: 'documents.create',
-      payload: { title: 'original' },
+      ...documentCreate('original'),
       serverCommitUnknown: true,
       retryAt,
     };
@@ -420,15 +426,7 @@ describe('OfflineSyncService', () => {
     'handles new writes queued during a post-send pull on %s',
     async (outcome) => {
       vi.useFakeTimers();
-      const request = (id: string) => ({
-        commandId: id,
-        scopeId: '10',
-        aggregateType: 'documents',
-        identity: { kind: 'generated' as const, localId: id },
-        operation: 'documents.create',
-        payload: { title: id },
-      });
-      await service.enqueue(request('first'), { flush: false });
+      await service.enqueue({ ...documentCreate('first'), commandId: 'first' }, { flush: false });
       TestBed.tick();
       networkConnected = () => true;
       let pulled!: () => void;
@@ -442,7 +440,7 @@ describe('OfflineSyncService', () => {
       });
       const flush = service.flush();
       await pulling;
-      await service.enqueue({ ...request('handoff'), serverCommitUnknown: true });
+      await service.enqueue({ ...documentCreate('handoff'), commandId: 'handoff', serverCommitUnknown: true });
       const pullsBeforeResume = pull.mock.calls.length;
       if (outcome === 'session revoked') service.revokeSession();
       release();
@@ -457,20 +455,8 @@ describe('OfflineSyncService', () => {
   it('automatically sends a write whose deadline passes during another aggregate’s post-send pull', async () => {
     vi.useFakeTimers();
     const retryAt = Date.now() + 10_000;
-    for (const id of ['later', 'now']) {
-      await service.enqueue(
-        {
-          commandId: id,
-          scopeId: '10',
-          aggregateType: 'documents',
-          identity: { kind: 'generated', localId: id },
-          operation: 'documents.create',
-          payload: { title: id },
-          retryAt: id === 'later' ? retryAt : undefined,
-        },
-        { flush: false },
-      );
-    }
+    await service.enqueue({ ...documentCreate('later'), commandId: 'later', retryAt }, { flush: false });
+    await service.enqueue({ ...documentCreate('now'), commandId: 'now' }, { flush: false });
     TestBed.tick();
     networkConnected = () => true;
     pull.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
@@ -485,13 +471,7 @@ describe('OfflineSyncService', () => {
 
   it('only arms a timer for the first unsent command of an aggregate', async () => {
     vi.useFakeTimers();
-    const request = {
-      scopeId: '10',
-      aggregateType: 'documents',
-      identity: { kind: 'generated' as const, localId: 'one-document' },
-      operation: 'documents.create',
-      payload: { title: 'document' },
-    };
+    const request = documentCreate('one-document');
     await service.enqueue({ ...request, commandId: 'first', retryAt: Date.now() + 60_000 }, { flush: false });
     await service.enqueue({ ...request, commandId: 'second', retryAt: Date.now() + 1_000 }, { flush: false });
     networkConnected = () => true;
@@ -506,13 +486,7 @@ describe('OfflineSyncService', () => {
   });
 
   it('rejects unsafe handoff metadata before committing the command or its optimistic row', async () => {
-    const request = {
-      scopeId: '10',
-      aggregateType: 'documents',
-      identity: { kind: 'generated' as const, localId: 'draft' },
-      operation: 'documents.create',
-      payload: { title: 'draft' },
-    };
+    const request = documentCreate('draft');
     await expect(service.enqueue({ ...request, serverCommitUnknown: true })).rejects.toThrow('original commandId');
     await expect(service.enqueue({ ...request, retryAt: Infinity })).rejects.toThrow('retryAt');
     expect(commands).toEqual([]);
@@ -6565,11 +6539,8 @@ describe('OfflineSyncService', () => {
       const fullFlush = service.flush();
       await service.enqueue({
         commandId: 'queued-during-partial',
+        ...documentCreate('document-20'),
         scopeId: '20',
-        aggregateType: 'documents',
-        identity: { kind: 'generated', localId: 'document-20' },
-        operation: 'documents.create',
-        payload: { title: 'queued' },
         serverCommitUnknown: true,
       });
       releaseForegroundPull?.();
